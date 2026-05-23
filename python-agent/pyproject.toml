@@ -1,0 +1,17 @@
+[project]
+name = "knowledge-post-agent-python-agent"
+version = "0.1.0"
+description = "Python gRPC LangGraph agent MVP for knowledge-post-agent"
+requires-python = ">=3.10"
+dependencies = [
+  "grpcio>=1.64,<2",
+  "grpcio-tools>=1.64,<2",
+  "protobuf>=5,<7",
+  "langgraph>=0.2,<1",
+  "PyYAML>=6,<7",
+  "pydantic>=2,<3"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

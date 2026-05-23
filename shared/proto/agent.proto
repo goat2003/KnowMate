@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package agent;
+
+option go_package = "knowledge-post-agent/proto/agentpb";
+
+message Article {
+  string article_id = 1;
+  string url = 2;
+  string title = 3;
+  string raw_text = 4;
+  string source = 5;
+  string published_at = 6;
+  repeated string tags = 7;
+}
+
+message McpPolicy {
+  bool mock_transport = 1;
+  bool enable_embedding = 2;
+  bool enable_fetch = 3;
+  bool enable_milvus = 4;
+  bool enable_neo4j = 5;
+}
+
+message McpCallLog {
+  string server_name = 1;
+  string tool_name = 2;
+  string request_json = 3;
+  string response_json = 4;
+  bool success = 5;
+  int64 latency_ms = 6;
+  string run_id = 7;
+  string agent_name = 8;
+  string status = 9;
+  string error_message = 10;
+}
+
+message ProcessArticlesRequest {
+  string run_id = 1;
+  repeated Article articles = 2;
+  map<string, string> user_profile_snapshot = 3;
+  McpPolicy mcp_policy = 4;
+}
+
+message ArticleProcessResult {
+  string article_id = 1;
+  bool keep = 2;
+  double score = 3;
+  string summary = 4;
+  string post_text = 5;
+  bool check_pass = 6;
+  repeated string issues = 7;
+  repeated McpCallLog mcp_call_logs = 8;
+}
+
+message ProcessArticlesResponse {
+  string run_id = 1;
+  repeated ArticleProcessResult results = 2;
+}
+
+message FeedbackItem {
+  string feedback_id = 1;
+  string user_id = 2;
+  string article_id = 3;
+  string post_id = 4;
+  string feedback_text = 5;
+  string feedback_type = 6;
+  int32 rating = 7;
+  map<string, string> metadata = 8;
+}
+
+message ProcessFeedbackRequest {
+  string run_id = 1;
+  repeated FeedbackItem feedback = 2;
+  map<string, string> user_profile_snapshot = 3;
+  McpPolicy mcp_policy = 4;
+}
+
+message ProcessFeedbackResponse {
+  string run_id = 1;
+  string sentiment = 2;
+  repeated string extracted_feedback = 3;
+  map<string, string> updated_profile_snapshot = 4;
+  repeated McpCallLog mcp_call_logs = 5;
+}
+
+message HealthCheckRequest {
+  string client = 1;
+}
+
+message HealthCheckResponse {
+  string status = 1;
+  string version = 2;
+  repeated string enabled_agents = 3;
+  bool mock_mode = 4;
+}
+
+service AgentService {
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc ProcessArticles(ProcessArticlesRequest) returns (ProcessArticlesResponse);
+  rpc ProcessFeedback(ProcessFeedbackRequest) returns (ProcessFeedbackResponse);
+}

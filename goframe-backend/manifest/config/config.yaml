@@ -1,0 +1,31 @@
+server:
+  address: ":8080"
+
+agent:
+  address: "127.0.0.1:50051"
+  timeout_seconds: 8
+  retry_times: 3
+
+mysql:
+  dsn: "root:rootpass@tcp(127.0.0.1:3306)/knowledge_post_agent?charset=utf8mb4&parseTime=true&loc=Local"
+
+schema:
+  path: "../shared/sql/init.sql"
+
+rss:
+  sources:
+    - name: "mock-knowledge-feed"
+      url: "mock://sample"
+      enabled: true
+      max_items: 5
+
+crawler:
+  source_max_items: 10
+  run_max_articles: 20
+
+output:
+  dir: "../shared/outputs"
+
+profile:
+  user_id: "default-user"
+  interests: "AI,knowledge-management,engineering"

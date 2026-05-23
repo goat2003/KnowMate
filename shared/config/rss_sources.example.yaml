@@ -1,0 +1,10 @@
+rss:
+  sources:
+    - name: "mock-knowledge-feed"
+      url: "mock://sample"
+      enabled: true
+      max_items: 5
+    - name: "hacker-news-ai"
+      url: "https://hnrss.org/newest?q=AI"
+      enabled: false
+      max_items: 5
