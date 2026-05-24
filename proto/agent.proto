@@ -1,102 +1,198 @@
+// 文件作用：
+// 本文件定义 GoFrame 后端与 Python Agent Service 之间的 gRPC 通信协议。
+// GoFrame 根据该协议构造请求，Python Agent 根据该协议返回文章处理、反馈处理和健康检查结果。
+//
+// 主要内容：
+// 1. Article：GoFrame 抓取或读取到的文章输入结构。
+// 2. McpPolicy：一次请求中 MCP 工具能力开关。
+// 3. McpCallLog：Python Agent 调用 MCP Tool 后返回的日志结构。
+// 4. ProcessArticles：文章筛选、摘要、改写、校验接口。
+// 5. ProcessFeedback：用户反馈提取和 user_profile_snapshot 更新接口。
+// 6. HealthCheck：Python Agent Service 健康检查接口。
+//
+// 阅读建议：
+// 先理解 message 表示跨语言传输的数据结构，再理解 service 中的 rpc 表示可被远程调用的方法。
 syntax = "proto3";
 
+// package 决定 protobuf 类型在协议层的命名空间。
 package agent;
 
+// go_package 告诉 protoc 生成 Go 代码时使用哪个包路径。
+// 注意：修改这个值会影响 GoFrame 后端导入生成类型的路径，因此这里只添加注释不改配置。
 option go_package = "knowledge-post-agent/proto/agentpb";
 
+// Article 表示一篇待处理文章。
+// GoFrame 后端抓取 RSS 或读取数据库后，会把文章字段填入这里并发送给 Python Agent。
 message Article {
+  // article_id 是文章唯一标识，用于把 Python 返回结果对应回 articles/posts 表。
   string article_id = 1;
+  // url 是原文链接，CheckAgent 会用它判断输出是否可追溯。
   string url = 2;
+  // title 是文章标题，FilterAgent 会把它作为筛选重要信号。
   string title = 3;
+  // raw_text 是文章正文，SummaryAgent 会用它生成摘要。
   string raw_text = 4;
+  // source 表示文章来源，例如 RSS 源名称。
   string source = 5;
+  // published_at 保存发布时间字符串，Python Agent 当前不解析时间格式。
   string published_at = 6;
+  // tags 是文章标签列表，repeated 表示可以有多个字符串值。
   repeated string tags = 7;
 }
 
+// McpPolicy 表示本次请求允许 Python Agent 使用哪些 MCP 能力。
+// Python Agent 会把它转换成 dict，并和默认策略合并。
 message McpPolicy {
+  // mock_transport 表示是否使用 mock MCP 传输层；真实选择还会结合 Python 配置 settings.mock_mcp。
   bool mock_transport = 1;
+  // enable_embedding 控制是否允许调用 embedding-mcp。
   bool enable_embedding = 2;
+  // enable_fetch 控制是否允许调用 fetch-mcp 拉取网页正文。
   bool enable_fetch = 3;
+  // enable_milvus 控制是否允许调用 milvus-mcp 做向量检索。
   bool enable_milvus = 4;
+  // enable_neo4j 控制是否允许调用 neo4j-mcp 读取或更新用户兴趣图谱。
   bool enable_neo4j = 5;
 }
 
+// McpCallLog 表示一次 MCP Tool 调用日志。
+// Python Agent 在 BaseMcpClient 中生成该日志，GoFrame 后端可写入 mcp_call_logs 表。
 message McpCallLog {
+  // server_name 是 MCP Server 名称，例如 embedding-mcp、neo4j-mcp。
   string server_name = 1;
+  // tool_name 是被调用的 MCP Tool 名称，例如 embed_text。
   string tool_name = 2;
+  // request_json 保存 JSON-RPC 请求体文本，便于后续排查入参。
   string request_json = 3;
+  // response_json 保存 JSON-RPC 响应体文本，便于排查工具输出。
   string response_json = 4;
+  // success 表示调用是否成功完成。
   bool success = 5;
+  // latency_ms 表示调用耗时，单位毫秒。
   int64 latency_ms = 6;
+  // run_id 用于关联一次完整任务。
   string run_id = 7;
+  // agent_name 表示哪个 Agent 发起该 MCP 调用。
   string agent_name = 8;
+  // status 保存 success、failed、denied 等更细状态。
   string status = 9;
+  // error_message 保存失败或权限拒绝原因。
   string error_message = 10;
 }
 
+// ProcessArticlesRequest 是文章处理 RPC 的请求。
+// GoFrame 发送文章列表、用户画像快照和 MCP 策略，Python Agent 返回处理结果。
 message ProcessArticlesRequest {
+  // run_id 是本次任务 id，缺失时 Python Agent 会自动生成。
   string run_id = 1;
+  // articles 是待处理文章列表。
   repeated Article articles = 2;
+  // user_profile_snapshot 是用户画像快照；map<string,string> 便于 Go/Python 跨语言传输。
   map<string, string> user_profile_snapshot = 3;
+  // mcp_policy 是本次请求的 MCP 能力开关。
   McpPolicy mcp_policy = 4;
 }
 
+// ArticleProcessResult 是单篇文章的处理结果。
+// Python Agent 会把 Filter/Summary/Rewrite/Check 的结果汇总到这里。
 message ArticleProcessResult {
+  // article_id 对应输入文章 id。
   string article_id = 1;
+  // keep 表示文章是否通过筛选并进入摘要改写流程。
   bool keep = 2;
+  // score 是 FilterAgent 给出的相关性分数。
   double score = 3;
+  // summary 是 SummaryAgent 生成的中文摘要。
   string summary = 4;
+  // post_text 是 RewriteAgent 生成的推文或知识笔记正文。
   string post_text = 5;
+  // check_pass 表示 CheckAgent 校验是否通过。
   bool check_pass = 6;
+  // issues 累积过滤、LLM fallback、校验等阶段发现的问题。
   repeated string issues = 7;
+  // mcp_call_logs 是该文章处理过程中产生的 MCP 调用日志。
   repeated McpCallLog mcp_call_logs = 8;
 }
 
+// ProcessArticlesResponse 是文章处理 RPC 的响应。
 message ProcessArticlesResponse {
+  // run_id 回传本次任务 id，便于 GoFrame 关联运行日志。
   string run_id = 1;
+  // results 是每篇文章对应的处理结果列表。
   repeated ArticleProcessResult results = 2;
 }
 
+// FeedbackItem 表示一条用户反馈。
+// GoFrame 可从 feedback_logs 或接口请求中组装这些字段。
 message FeedbackItem {
+  // feedback_id 是反馈记录 id。
   string feedback_id = 1;
+  // user_id 是反馈所属用户。
   string user_id = 2;
+  // article_id 是反馈关联的文章 id。
   string article_id = 3;
+  // post_id 是反馈关联的生成结果 id。
   string post_id = 4;
+  // feedback_text 是用户输入的自然语言反馈。
   string feedback_text = 5;
+  // feedback_type 表示点赞、收藏、不喜欢等反馈类别。
   string feedback_type = 6;
+  // rating 是评分，Python mock LLM 会用它辅助判断正负向情绪。
   int32 rating = 7;
+  // metadata 保存额外键值信息。
   map<string, string> metadata = 8;
 }
 
+// ProcessFeedbackRequest 是用户反馈处理 RPC 的请求。
 message ProcessFeedbackRequest {
+  // run_id 是本次反馈处理任务 id。
   string run_id = 1;
+  // feedback 是待处理反馈列表。
   repeated FeedbackItem feedback = 2;
+  // user_profile_snapshot 是当前用户画像快照，Python Agent 会在副本上更新。
   map<string, string> user_profile_snapshot = 3;
+  // mcp_policy 控制 MemoryAgent 是否可以调用 embedding/neo4j 等工具。
   McpPolicy mcp_policy = 4;
 }
 
+// ProcessFeedbackResponse 是用户反馈处理 RPC 的响应。
 message ProcessFeedbackResponse {
+  // run_id 回传本次任务 id。
   string run_id = 1;
+  // sentiment 是 FeedbackAgent 判断出的整体情绪。
   string sentiment = 2;
+  // extracted_feedback 是从用户反馈中提取出的偏好信号。
   repeated string extracted_feedback = 3;
+  // updated_profile_snapshot 是 MemoryAgent 更新后的用户画像快照，GoFrame 可写入 user_profile_snapshot 表。
   map<string, string> updated_profile_snapshot = 4;
+  // mcp_call_logs 是反馈处理过程中产生的 MCP 调用日志。
   repeated McpCallLog mcp_call_logs = 5;
 }
 
+// HealthCheckRequest 是健康检查请求。
 message HealthCheckRequest {
+  // client 可用于标记调用方名称，当前 Python Agent 不强依赖该字段。
   string client = 1;
 }
 
+// HealthCheckResponse 是健康检查响应。
 message HealthCheckResponse {
+  // status 表示服务状态，例如 SERVING。
   string status = 1;
+  // version 表示 Python Agent Service 版本。
   string version = 2;
+  // enabled_agents 返回当前工作流中启用的 Agent 名称。
   repeated string enabled_agents = 3;
+  // mock_mode 表示当前是否包含 mock LLM 或 mock MCP。
   bool mock_mode = 4;
 }
 
+// AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
 service AgentService {
+  // HealthCheck 用于检查 Python Agent Service 是否在线。
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  // ProcessArticles 触发文章筛选、摘要、改写和校验流程。
   rpc ProcessArticles(ProcessArticlesRequest) returns (ProcessArticlesResponse);
+  // ProcessFeedback 触发反馈提取和用户画像更新流程。
   rpc ProcessFeedback(ProcessFeedbackRequest) returns (ProcessFeedbackResponse);
 }

@@ -1,24 +1,39 @@
+# 文件作用：
+# 本文件定义 KnowMate 本地开发和端到端测试所需的 Docker 服务。
+# 当前只包含 MySQL，用于保存 articles、posts、feedback_logs、run_logs、user_profile_snapshot 和 mcp_call_logs。
+#
+# 注意：
+# YAML 支持 # 注释；本次只添加说明，不改变镜像、端口、环境变量、卷和健康检查含义。
 services:
+  # mysql 服务为 GoFrame 后端提供持久化数据库。
   mysql:
+    # 使用 MySQL 8.0，支持 JSON 字段和 utf8mb4。
     image: mysql:8.0
+    # 固定容器名，便于脚本 docker compose exec mysql。
     container_name: knowledge-post-agent-mysql
+    # unless-stopped 表示非手动停止时自动重启。
     restart: unless-stopped
+    # environment 初始化 root 密码、默认数据库、普通用户和时区。
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
       MYSQL_DATABASE: knowledge_post_agent
       MYSQL_USER: app
       MYSQL_PASSWORD: apppass
       TZ: Asia/Shanghai
+    # 将容器 3306 映射到本机 3306，GoFrame 默认 DSN 会连接该端口。
     ports:
       - "3306:3306"
+    # volumes 保存数据库数据，并把初始化 SQL 挂载到 MySQL 官方入口目录。
     volumes:
       - mysql-data:/var/lib/mysql
       - ./shared/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # healthcheck 用 mysqladmin ping 判断 MySQL 是否已可接受连接。
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
       interval: 10s
       timeout: 5s
       retries: 10
 
+# 命名卷用于持久化 MySQL 数据。
 volumes:
   mysql-data:
