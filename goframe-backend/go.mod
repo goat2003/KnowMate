@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/gogf/gf/v2 v2.10.2
+	github.com/jimsmart/grobotstxt v1.0.3
 	github.com/mmcdole/gofeed v1.3.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
