@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reliable Content Extraction</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "NewsArticle",
+      "headline": "Reliable Content Extraction from JSON-LD",
+      "author": [
+        {"@type": "Person", "name": "Ada Example"},
+        {"@type": "Person", "name": "Lin Example"}
+      ],
+      "datePublished": "2026-04-18T12:00:00Z"
+    }
+  </script>
+</head>
+<body>
+  <nav><a href="/one">A long navigation label that must not win extraction</a></nav>
+  <main>
+    <h1>Reliable Content Extraction</h1>
+    <p>A crawler should preserve meaningful prose while removing interface chrome, embedded programs, and invisible content.</p>
+    <p>The main element is the preferred source when an article element is absent, so the result remains predictable.</p>
+    <ol>
+      <li>Parse the document</li>
+      <li>Remove noisy nodes</li>
+      <li>Normalize readable text</li>
+    </ol>
+    <p>Escaped values such as research &amp; development must be decoded before downstream processing.</p>
+  </main>
+  <aside>
+    <p>This sidebar contains recommendations and many words but must never replace the main content.</p>
+  </aside>
+  <noscript>Enable scripts to view this unrelated message.</noscript>
+  <iframe>Embedded unrelated content</iframe>
+</body>
+</html>
