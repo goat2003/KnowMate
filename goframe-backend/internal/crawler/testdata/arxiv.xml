@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title>arXiv Query: search_query=all:agents</title>
+  <id>https://export.arxiv.org/api/query?search_query=all:agents</id>
+  <updated>2026-06-04T00:00:00Z</updated>
+  <entry>
+    <id>http://arxiv.org/abs/2606.01234v2</id>
+    <updated>2026-06-04T08:00:00Z</updated>
+    <published>2026-06-01T09:15:00Z</published>
+    <title>Reliable Knowledge Agents</title>
+    <summary>
+      We study reliable agents for maintaining personal knowledge bases.
+    </summary>
+    <author><name>Alice Researcher</name></author>
+    <author><name>Bob Scientist</name></author>
+    <link href="https://arxiv.org/abs/2606.01234v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2606.01234v2" rel="related" type="application/pdf" title="pdf"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <arxiv:primary_category term="cs.AI"/>
+    <arxiv:comment>Accepted at ExampleConf 2026</arxiv:comment>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2606.09999v1</id>
+    <title>Metadata-Light arXiv Paper</title>
+    <summary>A paper entry intentionally missing authors and timestamps.</summary>
+    <link href="https://arxiv.org/abs/2606.09999v1" rel="alternate" type="text/html"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

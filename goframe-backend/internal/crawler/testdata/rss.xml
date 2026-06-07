@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Engineering RSS</title>
+    <link>https://example.com/engineering</link>
+    <description>Engineering updates</description>
+    <item>
+      <guid isPermaLink="false">rss-entry-001</guid>
+      <link>https://example.com/engineering/rss-entry</link>
+      <title>RSS adapter article</title>
+      <description><![CDATA[Short RSS description.]]></description>
+      <content:encoded><![CDATA[<p>Full <strong>RSS</strong> content.</p>]]></content:encoded>
+      <dc:creator>Ada Lovelace</dc:creator>
+      <pubDate>Tue, 02 Jun 2026 10:30:00 +0800</pubDate>
+      <category>Go</category>
+      <category>Feeds</category>
+    </item>
+    <item>
+      <guid isPermaLink="false">rss-entry-missing-metadata</guid>
+      <link>https://example.com/engineering/missing-metadata</link>
+      <title>RSS entry without author or date</title>
+      <description>Fallback description only.</description>
+    </item>
+  </channel>
+</rss>

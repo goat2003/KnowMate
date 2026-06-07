@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>tag:github.com,2008:https://github.com/acme/knowledge-agent/releases</id>
+  <title>Release notes from knowledge-agent</title>
+  <updated>2026-06-05T04:30:00Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Repository/123456789/v1.2.0</id>
+    <updated>2026-06-05T04:30:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/acme/knowledge-agent/releases/tag/v1.2.0"/>
+    <title>Knowledge Agent v1.2.0</title>
+    <content type="html"><![CDATA[
+      <h2>What's changed</h2>
+      <ul><li>Added source adapters.</li></ul>
+    ]]></content>
+    <author>
+      <name>release-bot</name>
+      <uri>https://github.com/apps/release-bot</uri>
+    </author>
+    <category term="stable"/>
+    <category term="crawler"/>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Repository/123456789/v1.1.0</id>
+    <link rel="alternate" type="text/html" href="https://github.com/acme/knowledge-agent/releases/tag/v1.1.0"/>
+    <title>Knowledge Agent v1.1.0</title>
+    <content type="html"><![CDATA[<p>Release without author or timestamp.</p>]]></content>
+    <category term="maintenance"/>
+  </entry>
+</feed>

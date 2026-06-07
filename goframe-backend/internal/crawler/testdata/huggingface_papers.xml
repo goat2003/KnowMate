@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Hugging Face - Daily Papers</title>
+    <link>https://huggingface.co/papers</link>
+    <description>Daily machine learning papers</description>
+    <generator>Hugging Face Papers</generator>
+    <item>
+      <guid isPermaLink="true">https://huggingface.co/papers/2606.01234</guid>
+      <link>https://huggingface.co/papers/2606.01234</link>
+      <title>Compact Models for Knowledge Work</title>
+      <description><![CDATA[
+        <p>A compact model that improves retrieval and grounded generation.</p>
+      ]]></description>
+      <dc:creator>Carol Author</dc:creator>
+      <dc:creator>Dan Author</dc:creator>
+      <pubDate>Sat, 06 Jun 2026 07:00:00 GMT</pubDate>
+      <category>Machine Learning</category>
+      <category>Retrieval</category>
+    </item>
+    <item>
+      <guid isPermaLink="true">https://huggingface.co/papers/2606.09999</guid>
+      <link>https://huggingface.co/papers/2606.09999</link>
+      <title>Paper Without Author Or Date</title>
+      <description>A paper summary with intentionally sparse metadata.</description>
+      <category>Machine Learning</category>
+    </item>
+  </channel>
+</rss>

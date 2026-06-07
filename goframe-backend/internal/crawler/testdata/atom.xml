@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Engineering Atom</title>
+  <id>https://example.com/engineering/atom</id>
+  <updated>2026-06-03T12:00:00Z</updated>
+  <entry>
+    <id>tag:example.com,2026:atom-entry-001</id>
+    <link rel="alternate" href="https://example.com/engineering/atom-entry"/>
+    <title>Atom adapter article</title>
+    <summary>Short Atom summary.</summary>
+    <content type="html"><![CDATA[<p>Full <em>Atom</em> content.</p>]]></content>
+    <author><name>Grace Hopper</name></author>
+    <author><name>Margaret Hamilton</name></author>
+    <published>2026-06-03T11:45:00Z</published>
+    <updated>2026-06-03T12:00:00Z</updated>
+    <category term="Atom"/>
+    <category term="Engineering"/>
+  </entry>
+</feed>
