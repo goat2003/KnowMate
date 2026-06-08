@@ -96,6 +96,7 @@ func TestTraceHeadersRoundTripThroughPropagator(t *testing.T) {
 func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	ResetMetricsForTest()
 	RecordTaskRun(context.Background(), "articles", "completed", 1.2)
+	RecordCrawlerArticle(context.Background(), "rss", "feed", "fetched", 3)
 	RecordGRPCClient(context.Background(), "AgentService/ProcessArticles", "OK", 0.2)
 	RecordRecommendation(context.Background(), "kept", 2)
 	RecordPostGenerated(context.Background(), "success", 1)
@@ -107,10 +108,16 @@ func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", recorder.Code, body)
 	}
-	if !strings.Contains(body, "knowmate_task_runs_total") {
-		t.Fatalf("missing task metric in %s", body)
-	}
-	for _, metric := range []string{"knowmate_grpc_client_duration_seconds", "knowmate_recommendation_items_total", "knowmate_posts_generated_total", "knowmate_feedback_received_total"} {
+	for _, metric := range []string{
+		"knowmate_task_runs_total",
+		"knowmate_task_duration_seconds",
+		"knowmate_crawler_articles_total",
+		"knowmate_grpc_client_requests_total",
+		"knowmate_grpc_client_duration_seconds",
+		"knowmate_recommendation_items_total",
+		"knowmate_posts_generated_total",
+		"knowmate_feedback_received_total",
+	} {
 		if !strings.Contains(body, metric) {
 			t.Fatalf("missing %s in %s", metric, body)
 		}
