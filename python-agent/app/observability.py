@@ -16,6 +16,7 @@ from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import ProxyTracerProvider
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
@@ -23,25 +24,28 @@ _run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("knowmate_r
 _grpc_instrumented = False
 _tracing_configured = False
 
-_SENSITIVE_KEYS = {
-    "api_key",
+_NORMALIZED_SENSITIVE_KEYS = {
     "apikey",
     "authorization",
-    "access_token",
-    "refresh_token",
+    "proxyauthorization",
+    "xapikey",
+    "accesstoken",
+    "refreshtoken",
     "token",
     "password",
     "secret",
+    "clientsecret",
     "credential",
     "cookie",
-    "set-cookie",
-    "mysql_dsn",
+    "setcookie",
+    "mysqldsn",
     "dsn",
 }
 _REDACTED = "[REDACTED]"
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_BASIC_AUTH_RE = re.compile(r"(?i)\bBasic\s+[A-Za-z0-9._~+/=-]+")
 _KEY_VALUE_RE = re.compile(
-    r"(?i)\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|password|secret|credential)=([^&\s;]+)"
+    r"(?i)\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|password|secret|client[_-]?secret|credential)=([^&\s;]+)"
 )
 _MYSQL_DSN_RE = re.compile(r"(?i)\b(mysql(?:\+\w+)?://[^:\s/@]+:)([^@\s]+)(@)")
 _MYSQL_GO_DSN_RE = re.compile(r"(?i)\b([A-Za-z0-9_.-]+:)([^@\s]+)(@tcp\()")
@@ -69,11 +73,21 @@ def redact_sensitive(value: Any) -> Any:
                 redacted[key] = redact_sensitive(item)
         return redacted
     if isinstance(value, list):
+        if _is_sensitive_pair(value):
+            return [value[0], _REDACTED]
         return [redact_sensitive(item) for item in value]
     if isinstance(value, tuple):
+        if _is_sensitive_pair(value):
+            return (value[0], _REDACTED)
         return tuple(redact_sensitive(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return [redact_sensitive(item) for item in sorted(value, key=str)]
+    if isinstance(value, bytes):
+        return _redact_string(value.decode("utf-8", errors="replace"))
     if isinstance(value, str):
         return _redact_string(value)
+    if isinstance(value, BaseException):
+        return _redact_string(str(value))
     return value
 
 
@@ -96,10 +110,10 @@ class JSONFormatter(logging.Formatter):
         }
         extra_payload = getattr(record, "payload", None)
         if extra_payload is not None:
-            payload["payload"] = redact_sensitive(extra_payload)
+            payload["payload"] = _json_safe(redact_sensitive(extra_payload))
         if record.exc_info:
             payload["exception"] = redact_sensitive(self.formatException(record.exc_info))
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 class Metrics:
@@ -241,6 +255,11 @@ def init_observability(service_name: str) -> None:
         return
 
     if not _tracing_configured:
+        if _has_real_tracer_provider():
+            _tracing_configured = True
+            configure_json_logging(service_name)
+            return
+
         resource = Resource.create({"service.name": service_name})
         provider = TracerProvider(resource=resource)
         endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
@@ -260,15 +279,48 @@ def tracer(name: str) -> trace.Tracer:
 
 
 def _is_sensitive_key(key: Any) -> bool:
-    normalized = str(key).strip().lower().replace("-", "_")
-    return normalized in {item.replace("-", "_") for item in _SENSITIVE_KEYS}
+    normalized = _normalize_key(key)
+    return (
+        normalized in _NORMALIZED_SENSITIVE_KEYS
+        or normalized.endswith("secret")
+        or normalized.endswith("password")
+        or normalized.endswith("token")
+    )
+
+
+def _is_sensitive_pair(value: list[Any] | tuple[Any, ...]) -> bool:
+    return len(value) == 2 and _is_sensitive_key(value[0])
 
 
 def _redact_string(value: str) -> str:
     value = _BEARER_RE.sub(f"Bearer {_REDACTED}", value)
+    value = _BASIC_AUTH_RE.sub(f"Basic {_REDACTED}", value)
     value = _MYSQL_DSN_RE.sub(rf"\1{_REDACTED}\3", value)
     value = _MYSQL_GO_DSN_RE.sub(rf"\1{_REDACTED}\3", value)
     return _KEY_VALUE_RE.sub(lambda match: f"{match.group(1)}={_REDACTED}", value)
+
+
+def _normalize_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key).strip().lower())
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(item) for item in sorted(value, key=str)]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, BaseException):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except (TypeError, ValueError):
+            return str(value)
+    return value
 
 
 def _non_negative_float(value: int | float) -> float:
@@ -293,3 +345,7 @@ def _format_span_id(span_id: int) -> str | None:
 
 def _otel_disabled() -> bool:
     return os.getenv("OTEL_ENABLED", "").strip().lower() in {"0", "false", "no", "off"}
+
+
+def _has_real_tracer_provider() -> bool:
+    return not isinstance(trace.get_tracer_provider(), ProxyTracerProvider)
