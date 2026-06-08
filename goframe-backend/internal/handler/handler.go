@@ -106,6 +106,7 @@ func NewWithDependencies(store handlerStore, runner handlerRunner) *Handler {
 // 调用关系：
 // - 被 main.go 调用。
 func (h *Handler) Register(server *ghttp.Server) {
+	server.Use(observability.GoFrameTraceMiddleware("goframe-backend"))
 	// Group("/") 表示以下路由都挂在根路径下。
 	server.Group("/", func(group *ghttp.RouterGroup) {
 		// GET /health 同时检查数据库和 Python Agent。

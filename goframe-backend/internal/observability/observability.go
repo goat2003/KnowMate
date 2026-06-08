@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/net/ghttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -216,6 +217,21 @@ func SpanAttributes(runID, taskType string) []attribute.KeyValue {
 	return attrs
 }
 
+func SetSpanRunAttributes(ctx context.Context, runID, taskType string) {
+	span := trace.SpanFromContext(ctx)
+	if span == nil {
+		return
+	}
+	attrs := SpanAttributes(runID, taskType)
+	if len(attrs) > 0 {
+		span.SetAttributes(attrs...)
+	}
+}
+
+func StartRunSpan(ctx context.Context, tracerName, spanName, runID, taskType string) (context.Context, trace.Span) {
+	return otel.Tracer(tracerName).Start(ctx, spanName, trace.WithAttributes(SpanAttributes(runID, taskType)...))
+}
+
 func EnabledFromEnv() bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv("OTEL_ENABLED")))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
@@ -248,6 +264,17 @@ func TraceMiddleware(service string) func(http.Handler) http.Handler {
 			defer span.End()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+func GoFrameTraceMiddleware(service string) ghttp.HandlerFunc {
+	tracer := otel.Tracer(service)
+	return func(r *ghttp.Request) {
+		ctx := ExtractTraceContext(r.Context(), propagation.HeaderCarrier(r.Request.Header))
+		ctx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path)
+		defer span.End()
+		r.SetCtx(ctx)
+		r.Middleware.Next()
 	}
 }
 

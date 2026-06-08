@@ -5,9 +5,23 @@ import os
 from typing import Any, Callable, Protocol
 
 try:
-    from common.observability import METRICS, record_tool
+    from common.observability import (
+        METRICS,
+        current_trace_context,
+        init_observability,
+        record_tool,
+        reset_current_http_headers,
+        set_current_http_headers,
+    )
 except ModuleNotFoundError:
-    from observability import METRICS, record_tool
+    from observability import (
+        METRICS,
+        current_trace_context,
+        init_observability,
+        record_tool,
+        reset_current_http_headers,
+        set_current_http_headers,
+    )
 
 
 JsonDict = dict[str, Any]
@@ -91,6 +105,7 @@ def create_server(
         stateless_http=True,
     )
     tool_map = {tool.name: tool for tool in tools}
+    _install_trace_header_capture(server)
 
     @server._mcp_server.list_tools()
     async def list_tools() -> list[types.Tool]:
@@ -108,7 +123,7 @@ def create_server(
     async def call_tool(name: str, arguments: JsonDict) -> JsonDict:
         if name not in tool_map:
             raise ToolError(f"unknown tool `{name}`", code=-32601, data={"tool": name})
-        return await record_tool(server_name, name, lambda: handler(name, arguments))
+        return await record_tool(server_name, name, lambda: handler(name, arguments), context=current_trace_context())
 
     @server.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_request: Request) -> JSONResponse:
@@ -131,6 +146,7 @@ def run_server(
     health_provider: HealthProvider | None = None,
     lifecycle: Lifecycle | None = None,
 ) -> None:
+    init_observability(name)
     if lifecycle is not None:
         lifecycle.initialize()
     try:
@@ -166,3 +182,28 @@ def _transport() -> str:
     if transport not in {"stdio", "streamable-http"}:
         raise RuntimeError(f"Unsupported MCP_TRANSPORT `{transport}`")
     return transport
+
+
+def _install_trace_header_capture(server: Any) -> None:
+    original = server.streamable_http_app
+
+    def streamable_http_app_with_trace_headers():
+        app = original()
+
+        async def wrapped(scope, receive, send):
+            if scope.get("type") != "http":
+                await app(scope, receive, send)
+                return
+            headers = {
+                key.decode("latin1").lower(): value.decode("latin1")
+                for key, value in scope.get("headers", [])
+            }
+            token = set_current_http_headers(headers)
+            try:
+                await app(scope, receive, send)
+            finally:
+                reset_current_http_headers(token)
+
+        return wrapped
+
+    server.streamable_http_app = streamable_http_app_with_trace_headers

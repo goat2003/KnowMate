@@ -703,13 +703,16 @@ func (h *Harness) RunArticles(ctx context.Context) RunArticlesResult {
 func (h *Harness) runArticles(ctx context.Context, runID string, existing *model.TaskRun) RunArticlesResult {
 	startedAt := time.Now()
 	ctx = observability.WithRunID(ctx, runID)
+	observability.SetSpanRunAttributes(ctx, runID, TaskTypeArticles)
 	userID := h.cfg.Profile.UserID
 	if existing != nil && existing.UserID != "" {
 		userID = existing.UserID
 	}
 	result := RunArticlesResult{RunID: runID, Status: TaskStatusPending}
+	writeTaskJSONLog(ctx, "info", "task started", TaskTypeArticles, result.Status, "")
 	defer func() {
 		observability.RecordTaskRun(ctx, TaskTypeArticles, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+		writeTaskJSONLog(ctx, taskLogLevel(result.Status), "task finished", TaskTypeArticles, result.Status, result.Error)
 	}()
 	task, err := h.startTask(ctx, model.TaskRun{
 		RunID:          runID,
@@ -903,10 +906,13 @@ func (h *Harness) ProcessFeedback(ctx context.Context, req FeedbackRequest) Feed
 func (h *Harness) processFeedback(ctx context.Context, runID string, existing *model.TaskRun, req FeedbackRequest) FeedbackResult {
 	startedAt := time.Now()
 	ctx = observability.WithRunID(ctx, runID)
+	observability.SetSpanRunAttributes(ctx, runID, TaskTypeFeedback)
 	// 初始化反馈任务结果。
 	result := FeedbackResult{RunID: runID, Status: TaskStatusPending}
+	writeTaskJSONLog(ctx, "info", "task started", TaskTypeFeedback, result.Status, "")
 	defer func() {
 		observability.RecordTaskRun(ctx, TaskTypeFeedback, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+		writeTaskJSONLog(ctx, taskLogLevel(result.Status), "task finished", TaskTypeFeedback, result.Status, result.Error)
 	}()
 	// userID 优先使用请求值，缺失时用配置默认用户。
 	userID := firstNonEmpty(req.UserID, h.cfg.Profile.UserID)
@@ -1098,13 +1104,16 @@ func (h *Harness) RebuildProfile(ctx context.Context, req RebuildProfileRequest)
 func (h *Harness) rebuildProfile(ctx context.Context, runID string, existing *model.TaskRun, req RebuildProfileRequest) RebuildProfileResult {
 	startedAt := time.Now()
 	ctx = observability.WithRunID(ctx, runID)
+	observability.SetSpanRunAttributes(ctx, runID, TaskTypeProfileRebuild)
 	result := RebuildProfileResult{
 		RunID:  runID,
 		Status: TaskStatusPending,
 		UserID: firstNonEmpty(req.UserID, h.cfg.Profile.UserID),
 	}
+	writeTaskJSONLog(ctx, "info", "task started", TaskTypeProfileRebuild, result.Status, "")
 	defer func() {
 		observability.RecordTaskRun(ctx, TaskTypeProfileRebuild, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+		writeTaskJSONLog(ctx, taskLogLevel(result.Status), "task finished", TaskTypeProfileRebuild, result.Status, result.Error)
 	}()
 	task, err := h.startTask(ctx, model.TaskRun{
 		RunID:          runID,
@@ -1299,6 +1308,25 @@ func metricTaskStatus(status string) string {
 	default:
 		return TaskStatusFailed
 	}
+}
+
+func taskLogLevel(status string) string {
+	switch status {
+	case TaskStatusFailed:
+		return "error"
+	case TaskStatusPartiallyCompleted, TaskStatusCancelled:
+		return "warning"
+	default:
+		return "info"
+	}
+}
+
+func writeTaskJSONLog(ctx context.Context, level, message, taskType, status, errorMessage string) {
+	_ = observability.WriteJSONLog(os.Stdout, ctx, "goframe-backend", level, message, map[string]any{
+		"task_type": taskType,
+		"status":    status,
+		"error":     errorMessage,
+	})
 }
 
 func metricSourceItemCount(result crawler.SourceResult) int {

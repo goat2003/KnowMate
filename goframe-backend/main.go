@@ -63,13 +63,13 @@ func main() {
 	cfg := config.Load(ctx)
 	shutdown, err := observability.Init(ctx, observability.OptionsFromEnv("goframe-backend"))
 	if err != nil {
-		g.Log().Warningf(ctx, "observability init failed: %v", err)
+		_ = observability.WriteJSONLog(os.Stderr, ctx, "goframe-backend", "warning", "observability init failed", map[string]any{"error": err})
 	} else {
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := shutdown(shutdownCtx); err != nil {
-				g.Log().Warningf(ctx, "observability shutdown failed: %v", err)
+				_ = observability.WriteJSONLog(os.Stderr, ctx, "goframe-backend", "warning", "observability shutdown failed", map[string]any{"error": err})
 			}
 		}()
 	}
@@ -98,15 +98,15 @@ func main() {
 	// 初始化数据库 schema。
 	// 如果 MySQL 不可用或 schema 文件缺失，当前服务只记录警告，方便开发环境先启动 HTTP。
 	if err := mysqlStore.InitSchema(ctx, cfg.Schema.Path); err != nil {
-		g.Log().Fatalf(ctx, "schema init failed: %v", err)
-		return
+		_ = observability.WriteJSONLog(os.Stderr, ctx, "goframe-backend", "error", "schema init failed", map[string]any{"error": err})
+		os.Exit(1)
 	}
 	// 创建业务编排对象，后续 HTTP handler 会调用它完成文章任务和反馈任务。
 	runner := harness.New(cfg, mysqlStore)
 	if recovered, err := runner.RecoverInterruptedTasks(ctx); err != nil {
-		g.Log().Warningf(ctx, "task recovery scan failed: %v", err)
+		_ = observability.WriteJSONLog(os.Stderr, ctx, "goframe-backend", "warning", "task recovery scan failed", map[string]any{"error": err})
 	} else if len(recovered) > 0 {
-		g.Log().Infof(ctx, "recovered %d interrupted task(s) to pending state", len(recovered))
+		_ = observability.WriteJSONLog(os.Stdout, ctx, "goframe-backend", "info", "recovered interrupted tasks", map[string]any{"count": len(recovered)})
 	}
 	// 创建 HTTP handler，把 Store 和 Harness 注入进去。
 	httpHandler := handler.New(mysqlStore, runner)

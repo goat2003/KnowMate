@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -119,6 +121,26 @@ func TestTraceHeadersRoundTripThroughPropagator(t *testing.T) {
 	spanContext := trace.SpanContextFromContext(extracted)
 	if !spanContext.IsValid() {
 		t.Fatalf("expected valid extracted span context")
+	}
+}
+
+func TestStartRunSpanAddsRunAttributes(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(previousProvider) })
+
+	recorder := tracetest.NewSpanRecorder()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder)))
+
+	_, span := StartRunSpan(context.Background(), "test", "run-span", "run-attr", "articles")
+	span.End()
+
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("ended spans = %d", len(ended))
+	}
+	attrs := ended[0].Attributes()
+	if !hasAttr(attrs, "run_id", "run-attr") || !hasAttr(attrs, "task_type", "articles") {
+		t.Fatalf("missing run attributes: %#v", attrs)
 	}
 }
 
@@ -230,4 +252,13 @@ func installTestOTel(t *testing.T) {
 		propagation.Baggage{},
 	))
 	otel.SetTracerProvider(sdktrace.NewTracerProvider())
+}
+
+func hasAttr(attrs []attribute.KeyValue, key, value string) bool {
+	for _, attr := range attrs {
+		if string(attr.Key) == key && attr.Value.AsString() == value {
+			return true
+		}
+	}
+	return false
 }

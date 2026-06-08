@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -15,6 +17,10 @@ import (
 	"github.com/gogf/gf/v2/net/gclient"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestProfileHandlersReturnJSON(t *testing.T) {
@@ -90,6 +96,56 @@ func TestRunLogsStillReturnLegacyLogs(t *testing.T) {
 	response := getJSON(t, client, "/run-logs")
 	if response["ok"] != true || response["items"] == nil {
 		t.Fatalf("expected legacy run logs response, got %#v", response)
+	}
+}
+
+func TestRegisterTraceMiddlewareExtractsIncomingTraceparent(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample())))
+
+	store := newHandlerFakeStore()
+	runner := &handlerFakeRunner{}
+	h := NewWithDependencies(store, runner)
+	server := g.Server(uuid.NewString())
+	server.SetAddr("127.0.0.1:0")
+	h.Register(server)
+	if err := server.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer func() { _ = server.Shutdown() }()
+
+	request, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/runs/articles", server.GetListenedPort()), strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("traceparent", "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01")
+	responseHTTP, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer responseHTTP.Body.Close()
+	body, err := io.ReadAll(responseHTTP.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	raw := string(body)
+	response := decodeResponse(t, raw)
+	if response["ok"] != true {
+		t.Fatalf("expected run response, got %#v", response)
+	}
+	spanContext := trace.SpanContextFromContext(runner.lastArticlesContext)
+	if !spanContext.IsValid() {
+		t.Fatalf("expected valid incoming span context")
+	}
+	if spanContext.TraceID().String() != "1234567890abcdef1234567890abcdef" {
+		t.Fatalf("trace id = %s", spanContext.TraceID().String())
 	}
 }
 
@@ -197,13 +253,16 @@ func (fake *handlerFakeStore) RecommendationExplanationByPostID(context.Context,
 	}, nil
 }
 
-type handlerFakeRunner struct{}
+type handlerFakeRunner struct {
+	lastArticlesContext context.Context
+}
 
 func (fake *handlerFakeRunner) AgentHealth(context.Context) (*agentpb.HealthCheckResponse, error) {
 	return &agentpb.HealthCheckResponse{Status: "SERVING"}, nil
 }
 
-func (fake *handlerFakeRunner) RunArticles(context.Context) harness.RunArticlesResult {
+func (fake *handlerFakeRunner) RunArticles(ctx context.Context) harness.RunArticlesResult {
+	fake.lastArticlesContext = ctx
 	return harness.RunArticlesResult{RunID: "articles-test", Status: "completed"}
 }
 

@@ -11,6 +11,7 @@ import (
 	"knowledge-post-agent/goframe-backend/internal/observability"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -66,16 +67,28 @@ func (c *Client) HealthCheck(ctx context.Context) (*agentpb.HealthCheckResponse,
 
 // ProcessArticles 调用 Python Agent ProcessArticles RPC。
 func (c *Client) ProcessArticles(ctx context.Context, request *agentpb.ProcessArticlesRequest) (*agentpb.ProcessArticlesResponse, error) {
+	ctx, span := observability.StartRunSpan(ctx, "goframe-backend.grpcclient", "grpc.client.ProcessArticles", firstNonEmpty(request.GetRunId(), observability.RunIDFromContext(ctx)), "articles")
+	defer span.End()
 	started := time.Now()
 	response, err := c.service.ProcessArticles(ctx, request)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
 	recordGRPCClient(ctx, "ProcessArticles", err, started)
 	return response, err
 }
 
 // ProcessFeedback 调用 Python Agent ProcessFeedback RPC。
 func (c *Client) ProcessFeedback(ctx context.Context, request *agentpb.ProcessFeedbackRequest) (*agentpb.ProcessFeedbackResponse, error) {
+	ctx, span := observability.StartRunSpan(ctx, "goframe-backend.grpcclient", "grpc.client.ProcessFeedback", firstNonEmpty(request.GetRunId(), observability.RunIDFromContext(ctx)), "feedback")
+	defer span.End()
 	started := time.Now()
 	response, err := c.service.ProcessFeedback(ctx, request)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
 	recordGRPCClient(ctx, "ProcessFeedback", err, started)
 	return response, err
 }
@@ -86,4 +99,13 @@ func recordGRPCClient(ctx context.Context, method string, err error, started tim
 		code = status.Code(err).String()
 	}
 	observability.RecordGRPCClient(ctx, method, code, time.Since(started).Seconds())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

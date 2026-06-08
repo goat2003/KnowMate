@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import contextvars
+import json
+import logging
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from inspect import isawaitable
 from typing import Any, TypeVar
 
 from opentelemetry import context as otel_context_api
 from opentelemetry import propagate, trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.composite import CompositePropagator
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import ProxyTracerProvider
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
 
@@ -37,6 +50,32 @@ _MYSQL_DSN_RE = re.compile(r"(?i)\b(mysql(?:\+\w+)?://[^:\s/@]+:)([^@\s]+)(@)")
 _MYSQL_GO_DSN_RE = re.compile(r"(?i)\b([A-Za-z0-9_.-]+:)([^@\s]+)(@tcp\()")
 
 T = TypeVar("T")
+_http_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("knowmate_mcp_http_headers", default={})
+_tracing_configured = False
+
+
+class JSONFormatter(logging.Formatter):
+    def __init__(self, service_name: str) -> None:
+        super().__init__()
+        self.service_name = service_name
+
+    def format(self, record: logging.LogRecord) -> str:
+        span_context = trace.get_current_span().get_span_context()
+        payload: dict[str, Any] = {
+            "time": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "level": record.levelname,
+            "service": self.service_name,
+            "logger": record.name,
+            "message": redact_sensitive(record.getMessage()),
+            "trace_id": _format_trace_id(span_context.trace_id),
+            "span_id": _format_span_id(span_context.span_id),
+        }
+        extra_payload = getattr(record, "payload", None)
+        if extra_payload is not None:
+            payload["payload"] = _json_safe(redact_sensitive(extra_payload))
+        if record.exc_info:
+            payload["exception"] = redact_sensitive(self.formatException(record.exc_info))
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def redact_sensitive(value: Any) -> Any:
@@ -69,6 +108,49 @@ def redact_sensitive(value: Any) -> Any:
 
 def extract_trace_context(headers: dict[str, str]) -> otel_context_api.Context:
     return propagate.extract(headers)
+
+
+def set_current_http_headers(headers: dict[str, str]) -> contextvars.Token[dict[str, str]]:
+    return _http_headers.set({str(key).lower(): str(value) for key, value in headers.items()})
+
+
+def reset_current_http_headers(token: contextvars.Token[dict[str, str]]) -> None:
+    _http_headers.reset(token)
+
+
+def current_trace_context() -> otel_context_api.Context:
+    return extract_trace_context(_http_headers.get())
+
+
+def init_observability(service_name: str) -> None:
+    global _tracing_configured
+
+    set_global_textmap(CompositePropagator([TraceContextTextMapPropagator()]))
+    configure_json_logging(service_name)
+    if _otel_disabled():
+        return
+    if _tracing_configured or _has_real_tracer_provider():
+        _tracing_configured = True
+        return
+
+    resource = Resource.create({"service.name": service_name})
+    provider = TracerProvider(resource=resource)
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+    try:
+        trace.set_tracer_provider(provider)
+    except Exception:
+        logging.getLogger(__name__).debug("OpenTelemetry tracer provider already configured", exc_info=True)
+    _tracing_configured = True
+
+
+def configure_json_logging(service_name: str) -> None:
+    root = logging.getLogger()
+    root.handlers = []
+    handler = logging.StreamHandler()
+    handler.setFormatter(JSONFormatter(service_name))
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
 
 class Metrics:
@@ -165,3 +247,42 @@ def _non_negative_float(value: int | float) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, number)
+
+
+def _otel_disabled() -> bool:
+    return os.getenv("OTEL_ENABLED", "").strip().lower() in {"0", "false", "no", "off"}
+
+
+def _has_real_tracer_provider() -> bool:
+    return not isinstance(trace.get_tracer_provider(), ProxyTracerProvider)
+
+
+def _format_trace_id(trace_id: int) -> str | None:
+    if not trace_id:
+        return None
+    return f"{trace_id:032x}"
+
+
+def _format_span_id(span_id: int) -> str | None:
+    if not span_id:
+        return None
+    return f"{span_id:016x}"
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(item) for item in sorted(value, key=str)]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, BaseException):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except (TypeError, ValueError):
+            return str(value)
+    return value
