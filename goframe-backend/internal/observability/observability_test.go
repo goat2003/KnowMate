@@ -71,6 +71,9 @@ func TestJSONLogRecordIncludesTraceAndRunID(t *testing.T) {
 	if _, ok := record["trace_id"]; !ok {
 		t.Fatalf("missing trace_id: %#v", record)
 	}
+	if _, ok := record["span_id"]; !ok {
+		t.Fatalf("missing span_id: %#v", record)
+	}
 	if strings.Contains(text, "secret") {
 		t.Fatalf("sensitive field leaked in log record: %s", text)
 	}
