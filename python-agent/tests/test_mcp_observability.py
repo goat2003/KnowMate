@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from opentelemetry import trace
@@ -80,3 +81,36 @@ class McpObservabilityTest(unittest.TestCase):
             detach(token)
 
         self.assertIn("traceparent", carrier)
+
+    def test_streamable_http_request_hook_uses_attached_context(self) -> None:
+        transport = OfficialMcpTransport(
+            {"embedding-mcp": McpServerSettings(transport="streamable_http", url="http://127.0.0.1:1/mcp")},
+            timeout_seconds=1,
+        )
+        config = McpServerSettings(
+            transport="streamable_http",
+            url="http://127.0.0.1:1/mcp",
+            headers={"x-static": "kept"},
+        )
+        span_context = SpanContext(
+            trace_id=0xFEDCBA0987654321FEDCBA0987654321,
+            span_id=0xFEDCBA0987654321,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState(),
+        )
+        token = attach(set_span_in_context(NonRecordingSpan(span_context)))
+        try:
+            client = transport._create_streamable_http_client(config, inject_trace_context=True)
+            request = client.build_request("POST", "http://127.0.0.1:1/mcp")
+            for hook in client.event_hooks["request"]:
+                asyncio.run(hook(request))
+            asyncio.run(client.aclose())
+        finally:
+            detach(token)
+
+        self.assertEqual(request.headers["x-static"], "kept")
+        self.assertEqual(
+            request.headers["traceparent"],
+            "00-fedcba0987654321fedcba0987654321-fedcba0987654321-01",
+        )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import unittest
 
+from opentelemetry import trace
+
 from common.observability import METRICS, Metrics, extract_trace_context, record_tool, redact_sensitive
 from common.simple_http_mcp import ToolError, ToolSpec, create_server
 
@@ -69,7 +71,10 @@ class McpServerObservabilityTest(unittest.TestCase):
             {"traceparent": "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01"}
         )
 
-        self.assertIsNotNone(context)
+        span_context = trace.get_current_span(context).get_span_context()
+        self.assertTrue(span_context.is_valid)
+        self.assertEqual(span_context.trace_id, 0x1234567890ABCDEF1234567890ABCDEF)
+        self.assertEqual(span_context.span_id, 0x1234567890ABCDEF)
 
     def test_create_server_registers_metrics_route(self) -> None:
         server = create_server(

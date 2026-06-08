@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
@@ -22,10 +21,6 @@ from app.mcp.base_client import McpToolDefinition, MemoryMcpTransport
 
 
 LOGGER = logging.getLogger(__name__)
-_request_otel_context: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
-    "knowmate_mcp_request_otel_context",
-    default=None,
-)
 
 
 @dataclass(slots=True)
@@ -154,21 +149,8 @@ class OfficialMcpTransport:
                 elif config.transport == "streamable_http":
                     if not config.url:
                         raise RuntimeError(f"Missing Streamable HTTP URL for `{server_name}`")
-                    base_headers = dict(config.headers)
-
-                    async def inject_trace_context(request: httpx.Request) -> None:
-                        for key, value in base_headers.items():
-                            if key not in request.headers:
-                                request.headers[key] = value
-                        self._inject_trace_headers(request.headers, context=_request_otel_context.get())
-
                     http_client = await stack.enter_async_context(
-                        httpx.AsyncClient(
-                            headers=base_headers or None,
-                            timeout=self.timeout_seconds,
-                            follow_redirects=True,
-                            event_hooks={"request": [inject_trace_context]},
-                        )
+                        self._create_streamable_http_client(config, inject_trace_context=True)
                     )
                     read_stream, write_stream, _ = await stack.enter_async_context(
                         streamable_http_client(config.url, http_client=http_client)
@@ -204,34 +186,87 @@ class OfficialMcpTransport:
                 return discovered
 
     async def _call(self, server_name: str, tool_name: str, payload: JsonDict, otel_context: Any | None) -> JsonDict:
-        token = _request_otel_context.set(otel_context)
+        config = self._server(server_name)
+        if config.transport == "streamable_http":
+            return await self._call_streamable_http_once(server_name, tool_name, payload, otel_context)
+
+        connection = await self._connect(server_name)
         try:
-            connection = await self._connect(server_name)
-            try:
-                result = await connection.session.call_tool(
-                    tool_name,
-                    payload,
-                    read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
-                )
-                if result.isError:
-                    messages = [getattr(content, "text", "") for content in result.content]
-                    raise RuntimeError(
-                        "; ".join(message for message in messages if message) or "MCP tool returned an error"
-                    )
-                if isinstance(result.structuredContent, dict):
-                    return dict(result.structuredContent)
-                for content in result.content:
-                    text = getattr(content, "text", "")
-                    if text:
-                        parsed = json.loads(text)
-                        if isinstance(parsed, dict):
-                            return parsed
-                raise RuntimeError(f"MCP tool `{server_name}.{tool_name}` returned no structured object")
-            except Exception:
-                await self._drop_connection(server_name)
-                raise
+            result = await connection.session.call_tool(
+                tool_name,
+                payload,
+                read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
+            )
+            return self._parse_tool_result(server_name, tool_name, result)
+        except Exception:
+            await self._drop_connection(server_name)
+            raise
+
+    async def _call_streamable_http_once(
+        self,
+        server_name: str,
+        tool_name: str,
+        payload: JsonDict,
+        otel_context: Any | None,
+    ) -> JsonDict:
+        config = self._server(server_name)
+        if not config.url:
+            raise RuntimeError(f"Missing Streamable HTTP URL for `{server_name}`")
+
+        token = otel_context_api.attach(otel_context) if otel_context is not None else None
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamable_http_client
+
+            # Create Streamable HTTP calls per request so the SDK's background writer tasks
+            # inherit the caller's OpenTelemetry context across the client loop thread.
+            async with self._create_streamable_http_client(config, inject_trace_context=True) as http_client:
+                async with streamable_http_client(config.url, http_client=http_client) as (read_stream, write_stream, _):
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                        read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
+                    ) as session:
+                        await session.initialize()
+                        result = await session.call_tool(
+                            tool_name,
+                            payload,
+                            read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
+                        )
+                        return self._parse_tool_result(server_name, tool_name, result)
         finally:
-            _request_otel_context.reset(token)
+            if token is not None:
+                otel_context_api.detach(token)
+
+    def _create_streamable_http_client(self, config: McpServerSettings, *, inject_trace_context: bool) -> httpx.AsyncClient:
+        base_headers = dict(config.headers)
+
+        async def inject_trace_context_hook(request: httpx.Request) -> None:
+            for key, value in base_headers.items():
+                if key not in request.headers:
+                    request.headers[key] = value
+            self._inject_trace_headers(request.headers)
+
+        return httpx.AsyncClient(
+            headers=base_headers or None,
+            timeout=self.timeout_seconds,
+            follow_redirects=True,
+            event_hooks={"request": [inject_trace_context_hook]} if inject_trace_context else None,
+        )
+
+    def _parse_tool_result(self, server_name: str, tool_name: str, result: Any) -> JsonDict:
+        if result.isError:
+            messages = [getattr(content, "text", "") for content in result.content]
+            raise RuntimeError("; ".join(message for message in messages if message) or "MCP tool returned an error")
+        if isinstance(result.structuredContent, dict):
+            return dict(result.structuredContent)
+        for content in result.content:
+            text = getattr(content, "text", "")
+            if text:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+        raise RuntimeError(f"MCP tool `{server_name}.{tool_name}` returned no structured object")
 
     async def _drop_connection(self, server_name: str) -> None:
         connection = self._connections.pop(server_name, None)
