@@ -164,6 +164,23 @@ func TestRunArticlesRecordsTaskAndCrawlerMetrics(t *testing.T) {
 	}
 }
 
+func TestRunArticlesActiveTaskRecordsReturnedStatusMetric(t *testing.T) {
+	observability.ResetMetricsForTest()
+	store := &fakeArticleStore{activeTask: &model.TaskRun{RunID: "articles-active", Status: TaskStatusRunning, TaskType: TaskTypeArticles, UserID: "u1"}}
+	harness := newWithDependencies(testCrawlerConfig("working"), store, &fakeSourceCrawler{})
+
+	result := harness.runArticles(context.Background(), "articles-new", nil)
+
+	if result.RunID != "articles-active" || result.Status != TaskStatusRunning {
+		t.Fatalf("expected active running result, got %#v", result)
+	}
+	body := metricsBody(t)
+	want := `knowmate_task_runs_total{status="running",task_type="articles"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("missing metric %q in:\n%s", want, body)
+	}
+}
+
 func metricsBody(t *testing.T) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/metrics", nil)
@@ -208,6 +225,7 @@ type fakeArticleStore struct {
 	existingPostArticles map[string]bool
 	cancelledRunIDs      map[string]bool
 	lastTaskStatusErr    error
+	activeTask           *model.TaskRun
 }
 
 func (fake *fakeArticleStore) InsertArticle(_ context.Context, article model.Article) (bool, error) {
@@ -259,6 +277,9 @@ func (fake *fakeArticleStore) CreateTaskRun(_ context.Context, task model.TaskRu
 	if fake.cancelledRunIDs != nil && fake.cancelledRunIDs[task.RunID] {
 		task.Status = TaskStatusCancelled
 		task.CancelRequested = true
+	}
+	if fake.activeTask != nil {
+		return *fake.activeTask, nil
 	}
 	if existing, ok := fake.taskRuns[task.RunID]; ok {
 		return existing, nil

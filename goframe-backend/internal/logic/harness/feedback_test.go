@@ -105,6 +105,42 @@ func TestProcessFeedbackRecordsFeedbackAndTaskMetrics(t *testing.T) {
 	}
 }
 
+func TestProcessFeedbackActiveTaskRecordsReturnedStatusMetric(t *testing.T) {
+	observability.ResetMetricsForTest()
+	store := newFeedbackFakeStore()
+	store.activeTask = &model.TaskRun{RunID: "feedback-active", Status: TaskStatusRunning, TaskType: TaskTypeFeedback, UserID: "u1"}
+	h := newWithDependencies(config.Config{Profile: config.ProfileConfig{UserID: "u1"}}, store, &fakeSourceCrawler{})
+
+	result := h.processFeedback(context.Background(), "feedback-new", nil, FeedbackRequest{PostID: "p1", UserID: "u1", FeedbackText: "useful", FeedbackType: "text"})
+
+	if result.RunID != "feedback-active" || result.Status != TaskStatusRunning {
+		t.Fatalf("expected active running result, got %#v", result)
+	}
+	body := metricsBody(t)
+	want := `knowmate_task_runs_total{status="running",task_type="feedback"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("missing metric %q in:\n%s", want, body)
+	}
+}
+
+func TestRebuildProfileActiveTaskRecordsReturnedStatusMetric(t *testing.T) {
+	observability.ResetMetricsForTest()
+	store := newFeedbackFakeStore()
+	store.activeTask = &model.TaskRun{RunID: "profile-active", Status: TaskStatusRunning, TaskType: TaskTypeProfileRebuild, UserID: "u1"}
+	h := newWithDependencies(config.Config{Profile: config.ProfileConfig{UserID: "u1"}}, store, &fakeSourceCrawler{})
+
+	result := h.rebuildProfile(context.Background(), "profile-new", nil, RebuildProfileRequest{UserID: "u1"})
+
+	if result.RunID != "profile-active" || result.Status != TaskStatusRunning {
+		t.Fatalf("expected active running result, got %#v", result)
+	}
+	body := metricsBody(t)
+	want := `knowmate_task_runs_total{status="running",task_type="profile_rebuild"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("missing metric %q in:\n%s", want, body)
+	}
+}
+
 type feedbackFakeStore struct {
 	feedbackByKey     map[string]model.FeedbackRecord
 	nextFeedbackID    uint64
@@ -117,6 +153,7 @@ type feedbackFakeStore struct {
 	mcpLogs           []model.McpCallLog
 	taskRuns          map[string]model.TaskRun
 	taskSteps         []model.TaskStep
+	activeTask        *model.TaskRun
 }
 
 func newFeedbackFakeStore() *feedbackFakeStore {
@@ -222,6 +259,9 @@ func (fake *feedbackFakeStore) InsertRunLog(_ context.Context, run model.RunLog)
 func (fake *feedbackFakeStore) CreateTaskRun(_ context.Context, task model.TaskRun) (model.TaskRun, error) {
 	if fake.taskRuns == nil {
 		fake.taskRuns = map[string]model.TaskRun{}
+	}
+	if fake.activeTask != nil {
+		return *fake.activeTask, nil
 	}
 	if existing, ok := fake.taskRuns[task.RunID]; ok {
 		return existing, nil

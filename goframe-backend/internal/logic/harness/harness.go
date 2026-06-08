@@ -734,11 +734,12 @@ func (h *Harness) runArticles(ctx context.Context, runID string, existing *model
 		return result
 	}
 	if task.RunID != runID && (task.Status == TaskStatusPending || task.Status == TaskStatusRunning) {
-		return RunArticlesResult{
+		result = RunArticlesResult{
 			RunID:  task.RunID,
 			Status: task.Status,
 			Error:  "user already has an active article task",
 		}
+		return result
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(task.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -933,7 +934,8 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 		return result
 	}
 	if task.RunID != runID && (task.Status == TaskStatusPending || task.Status == TaskStatusRunning) {
-		return FeedbackResult{RunID: task.RunID, Status: task.Status, Error: "user already has an active feedback task"}
+		result = FeedbackResult{RunID: task.RunID, Status: task.Status, Error: "user already has an active feedback task"}
+		return result
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(task.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -1124,7 +1126,8 @@ func (h *Harness) rebuildProfile(ctx context.Context, runID string, existing *mo
 		return result
 	}
 	if task.RunID != runID && (task.Status == TaskStatusPending || task.Status == TaskStatusRunning) {
-		return RebuildProfileResult{RunID: task.RunID, UserID: result.UserID, Status: task.Status, Error: "user already has an active profile rebuild task"}
+		result = RebuildProfileResult{RunID: task.RunID, UserID: result.UserID, Status: task.Status, Error: "user already has an active profile rebuild task"}
+		return result
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(task.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -1291,7 +1294,7 @@ func sourceRunModel(runID string, result crawler.SourceResult, startedAt time.Ti
 
 func metricTaskStatus(status string) string {
 	switch status {
-	case TaskStatusCompleted, TaskStatusFailed, TaskStatusPartiallyCompleted, TaskStatusCancelled:
+	case TaskStatusPending, TaskStatusRunning, TaskStatusCompleted, TaskStatusFailed, TaskStatusPartiallyCompleted, TaskStatusCancelled:
 		return status
 	default:
 		return TaskStatusFailed
