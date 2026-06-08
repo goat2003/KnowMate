@@ -127,6 +127,20 @@ curl.exe -X POST http://127.0.0.1:8080/profile/rebuild `
 
 Generated Markdown files are written to [shared/outputs](D:/projects/KnowMate/knowledge-post-agent/shared/outputs). The default RSS source is `mock://sample`, so the MVP can run without internet access once MySQL and Python Agent are up.
 
+## Observability
+
+The local Compose stack includes OpenTelemetry Collector, Jaeger, Prometheus, Grafana, and Alertmanager for traces, metrics, dashboards, and alerts.
+
+Start the observability-enabled stack:
+
+```powershell
+docker compose up -d mysql embedding-mcp fetch-mcp milvus-mcp neo4j-mcp python-agent goframe-backend otel-collector jaeger prometheus alertmanager grafana
+```
+
+Open Grafana at http://127.0.0.1:3000, Prometheus at http://127.0.0.1:9090, Jaeger at http://127.0.0.1:16686, and Alertmanager at http://127.0.0.1:9093. Metrics are exposed by GoFrame at http://127.0.0.1:8080/metrics, Python Agent at http://127.0.0.1:9101/metrics, and the MCP servers at ports 7001-7004 under `/metrics`.
+
+More metrics, log fields, alert rules, port-conflict notes, and the local runbook are in [docs/observability.md](docs/observability.md).
+
 ## End-To-End Smoke
 
 The full MVP path is:
