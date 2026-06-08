@@ -288,7 +288,7 @@ services:
     restart: unless-stopped
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
-      - "4317:4317"
+      - "4319:4317"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:16686"]
       interval: 10s

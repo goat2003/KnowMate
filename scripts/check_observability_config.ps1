@@ -9,7 +9,7 @@ $requiredFiles = @(
     "observability/prometheus.yml",
     "observability/alertmanager.yml",
     "observability/alerts.yml",
-    "observability/grafana/provisioning/datasources/datasource.yml",
+    "observability/grafana/provisioning/datasources/prometheus.yml",
     "observability/grafana/provisioning/dashboards/dashboards.yml",
     "observability/grafana/dashboards/knowmate-overview.json"
 )
