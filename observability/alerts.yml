@@ -18,7 +18,7 @@ groups:
           summary: KnowMate task failure rate is high
 
       - alert: KnowMateCrawlerFailureRateHigh
-        expr: sum(rate(knowmate_crawler_articles_total{status=~"failure|partial|error"}[10m])) / clamp_min(sum(rate(knowmate_crawler_articles_total[10m])), 0.001) > 0.15
+        expr: sum(rate(knowmate_crawler_articles_total{status=~"failed|partial"}[10m])) / clamp_min(sum(rate(knowmate_crawler_articles_total[10m])), 0.001) > 0.15
         for: 10m
         labels:
           severity: warning
