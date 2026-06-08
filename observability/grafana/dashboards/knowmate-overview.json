@@ -407,8 +407,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(knowmate_mcp_tool_duration_seconds_bucket[5m])) by (le, tool_name))",
-          "legendFormat": "{{tool_name}}",
+          "expr": "histogram_quantile(0.95, sum(rate(knowmate_mcp_tool_duration_seconds_bucket[5m])) by (le, server, tool))",
+          "legendFormat": "{{server}} {{tool}}",
           "range": true,
           "refId": "A"
         }
@@ -451,7 +451,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(knowmate_recommendation_items_total{outcome=\"retained\"}[30m])) / clamp_min(sum(rate(knowmate_recommendation_items_total[30m])), 0.001)",
+          "expr": "sum(rate(knowmate_recommendation_items_total{decision=\"kept\"}[30m])) / clamp_min(sum(rate(knowmate_recommendation_items_total[30m])), 0.001)",
           "legendFormat": "retention",
           "range": true,
           "refId": "A"

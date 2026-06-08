@@ -221,6 +221,8 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
       OTEL_SERVICE_NAME: knowmate-python-agent
+      METRICS_HOST: 0.0.0.0
+      METRICS_PORT: 9101
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       MOCK_MCP: "false"
       EMBEDDING_MCP_TRANSPORT: streamable_http
@@ -233,6 +235,7 @@ services:
       NEO4J_MCP_URL: http://neo4j-mcp:7004/mcp
     ports:
       - "${AGENT_PORT:-50051}:50051"
+      - "${AGENT_METRICS_PORT:-9101}:9101"
     depends_on:
       embedding-mcp:
         condition: service_healthy
@@ -242,8 +245,6 @@ services:
         condition: service_healthy
       neo4j-mcp:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc,agent_pb2,agent_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:50051'); agent_pb2_grpc.AgentServiceStub(c).HealthCheck(agent_pb2.HealthCheckRequest(client='docker'), timeout=3)"]
       interval: 5s
@@ -275,8 +276,6 @@ services:
         condition: service_healthy
       python-agent:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 5s
@@ -286,6 +285,8 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.63.0
     restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
       - "4319:4317"

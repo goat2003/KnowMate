@@ -5,7 +5,9 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from opentelemetry import trace
@@ -228,6 +230,30 @@ class Metrics:
 
 
 METRICS = Metrics()
+
+
+def start_metrics_server(host: str = "0.0.0.0", port: int = 9101) -> ThreadingHTTPServer:
+    class MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path != "/metrics":
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            payload = METRICS.render_text()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            logging.getLogger(__name__).debug("metrics server: " + format, *args)
+
+    server = ThreadingHTTPServer((host, int(port)), MetricsHandler)
+    thread = threading.Thread(target=server.serve_forever, name="knowmate-metrics-server", daemon=True)
+    thread.start()
+    return server
 
 
 def configure_json_logging(service_name: str) -> None:

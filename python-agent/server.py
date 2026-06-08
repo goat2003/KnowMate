@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from app.config import load_settings
 from app.grpc_server import serve
-from app.observability import init_observability
+from app.observability import init_observability, start_metrics_server
 
 
 # 函数作用：
@@ -37,6 +37,7 @@ def main() -> None:
     # 加载 config.yaml 和环境变量，得到服务运行配置。
     settings = load_settings()
     init_observability("python-agent")
+    start_metrics_server(settings.metrics_host, settings.metrics_port)
     # 启动 gRPC Server，等待 GoFrame 后端调用。
     serve(settings)
 

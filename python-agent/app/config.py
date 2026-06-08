@@ -130,6 +130,8 @@ class Settings:
     host: str = "0.0.0.0"
     # port 是 gRPC Server 监听端口。
     port: int = 50051
+    metrics_host: str = "0.0.0.0"
+    metrics_port: int = 9101
     # version 会在 HealthCheck 响应中返回。
     version: str = "0.1.0"
     # mock_llm 表示是否使用 mock LLM provider。
@@ -190,6 +192,8 @@ def load_settings() -> Settings:
     return Settings(
         host=os.getenv("AGENT_HOST", agent.get("host", "0.0.0.0")),
         port=int(os.getenv("AGENT_PORT", agent.get("port", 50051))),
+        metrics_host=os.getenv("METRICS_HOST", agent.get("metrics_host", "0.0.0.0")),
+        metrics_port=int(os.getenv("METRICS_PORT", agent.get("metrics_port", 9101))),
         version=os.getenv("AGENT_VERSION", agent.get("version", "0.1.0")),
         # mock_llm 由最终 provider 是否为 mock 推导，避免 YAML 和实际 provider 不一致。
         mock_llm=llm_settings.provider == "mock",

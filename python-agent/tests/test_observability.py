@@ -1,7 +1,10 @@
 import json
 import logging
+import socket
 import unittest
 from datetime import datetime, timezone
+from urllib.error import HTTPError
+from urllib.request import urlopen
 from unittest.mock import Mock, patch
 
 from opentelemetry import trace
@@ -14,6 +17,7 @@ from app.observability import (
     current_run_id,
     redact_sensitive,
     set_run_id,
+    start_metrics_server,
 )
 
 
@@ -214,6 +218,22 @@ class ObservabilityTest(unittest.TestCase):
         self.assertIn("knowmate_test_llm_tokens_total", rendered)
         self.assertIn("knowmate_test_llm_cost_usd_total", rendered)
 
+    def test_metrics_server_serves_metrics_and_404s_other_paths(self) -> None:
+        port = _free_local_port()
+        server = start_metrics_server(host="127.0.0.1", port=port)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        metrics_response = urlopen(f"http://127.0.0.1:{port}/metrics", timeout=3)
+        rendered = metrics_response.read().decode("utf-8")
+
+        self.assertEqual(metrics_response.status, 200)
+        self.assertEqual(metrics_response.headers.get_content_type(), "text/plain")
+        self.assertIn("knowmate_agent_runs_total", rendered)
+        with self.assertRaises(HTTPError) as error:
+            urlopen(f"http://127.0.0.1:{port}/not-metrics", timeout=3)
+        self.assertEqual(error.exception.code, 404)
+
     def test_workflow_records_agent_metrics(self) -> None:
         from app.config import Settings
         from app.observability import METRICS
@@ -246,6 +266,12 @@ class ObservabilityTest(unittest.TestCase):
         self.assertIn('agent="summary"', after)
         self.assertIn('agent="rewrite"', after)
         self.assertIn('agent="check"', after)
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 if __name__ == "__main__":
