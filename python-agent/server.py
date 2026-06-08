@@ -16,10 +16,9 @@
 # 这里没有业务处理逻辑；真正的 gRPC 方法在 app/grpc_server.py，真正的 Agent 工作流在 app/workflow/graph.py。
 from __future__ import annotations
 
-import logging
-
 from app.config import load_settings
 from app.grpc_server import serve
+from app.observability import init_observability
 
 
 # 函数作用：
@@ -34,10 +33,10 @@ from app.grpc_server import serve
 # 调用关系：
 # - 当直接执行 python server.py 时由文件底部的 if __name__ == "__main__" 调用。
 def main() -> None:
-    # 初始化标准日志格式，方便查看时间、级别、模块名和消息。
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # 初始化结构化 JSON 日志和 OpenTelemetry/gRPC observability。
     # 加载 config.yaml 和环境变量，得到服务运行配置。
     settings = load_settings()
+    init_observability("python-agent")
     # 启动 gRPC Server，等待 GoFrame 后端调用。
     serve(settings)
 
