@@ -353,7 +353,7 @@ class ArticleWorkflow:
 
 def _run_agent_with_observability(agent, state: JsonDict) -> JsonDict:
     started = time.perf_counter()
-    status = "ok"
+    status = "success"
     agent_name = str(getattr(agent, "name", agent.__class__.__name__))
     with tracer(__name__).start_as_current_span(f"agent.{agent_name}") as span:
         span.set_attribute("agent", agent_name)

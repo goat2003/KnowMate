@@ -194,13 +194,13 @@ class ObservabilityTest(unittest.TestCase):
     def test_metrics_render_agent_and_llm_values(self) -> None:
         metrics = Metrics(namespace="knowmate_test")
 
-        metrics.record_agent_run("summary", "ok", 0.12)
+        metrics.record_agent_run("summary", "success", 0.12)
         metrics.record_grpc_server("ProcessArticles", "OK", 0.34)
         metrics.record_llm_usage(
             provider="mock",
             model="mock-model",
             task="summary",
-            status="ok",
+            status="success",
             prompt_tokens=10,
             completion_tokens=5,
             cost_usd=0.01,
@@ -239,6 +239,10 @@ class ObservabilityTest(unittest.TestCase):
 
         self.assertNotEqual(before, after)
         self.assertIn('agent="filter"', after)
+        self.assertTrue(
+            'agent="filter",status="success"' in after
+            or 'status="success",agent="filter"' in after
+        )
         self.assertIn('agent="summary"', after)
         self.assertIn('agent="rewrite"', after)
         self.assertIn('agent="check"', after)

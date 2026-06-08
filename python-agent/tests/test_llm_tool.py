@@ -52,6 +52,23 @@ class BadAlwaysClient(LLMClient):
 
 # 类作用：
 # LLMToolTest 覆盖 LLMTool 的关键容错路径。
+
+
+class SensitiveFailureThenGoodClient(LLMClient):
+    provider_name = "sensitive-then-good"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.repair_prompt = ""
+
+    def complete_json(self, task: str, system_prompt: str, user_prompt: str) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("api_key=secret-token")
+        self.repair_prompt = user_prompt
+        return '{"summary":"repaired summary","issues":[]}'
+
+
 class LLMToolTest(unittest.TestCase):
     # 函数作用：
     # 验证 mock 摘要输出能通过 SummaryLLMOutput 校验。
@@ -79,6 +96,17 @@ class LLMToolTest(unittest.TestCase):
 
     # 函数作用：
     # 验证主调用和 repair 都失败时，会 fallback 到 mock 摘要，并记录 issue。
+
+    def test_repair_prompt_redacts_sensitive_primary_error(self) -> None:
+        client = SensitiveFailureThenGoodClient()
+        tool = LLMTool(client)
+
+        output = tool.summarize({"title": "T", "raw_text": "body"}, {}, "")
+
+        self.assertEqual(output.summary, "repaired summary")
+        self.assertNotIn("secret-token", client.repair_prompt)
+        self.assertIn("[REDACTED]", client.repair_prompt)
+
     def test_fallback_when_parse_and_repair_fail(self) -> None:
         tool = LLMTool(BadAlwaysClient())
         output = tool.summarize({"title": "T", "raw_text": "body"}, {}, "")

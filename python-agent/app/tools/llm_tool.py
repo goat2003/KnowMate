@@ -503,7 +503,7 @@ class LLMTool:
         try:
             return self._complete_and_validate(task, schema, system_prompt, user_prompt, prompt_tokens, "primary")
         except Exception as first_error:
-            first_error_message = str(redact_sensitive(first_error))
+            first_error_message = str(redact_sensitive(str(first_error)))
             LOGGER.warning("LLM %s output failed validation for %s: %s", self.client.provider_name, task, first_error_message)
             try:
                 repair_prompt = (
@@ -516,7 +516,8 @@ class LLMTool:
                 repair_tokens = _estimate_tokens(system_prompt) + _estimate_tokens(repair_prompt)
                 return self._complete_and_validate(task, schema, system_prompt, repair_prompt, repair_tokens, "repair")
             except Exception as repair_error:
-                LOGGER.warning("LLM %s repair failed for %s: %s", self.client.provider_name, task, redact_sensitive(repair_error))
+                repair_error_message = str(redact_sensitive(str(repair_error)))
+                LOGGER.warning("LLM %s repair failed for %s: %s", self.client.provider_name, task, repair_error_message)
                 issue = f"llm_fallback:{self.client.provider_name}:{type(repair_error).__name__}"
                 return self._record_fallback(task, prompt_tokens, fallback, issue)
 
@@ -540,13 +541,15 @@ class LLMTool:
             try:
                 raw = self.client.complete_json(task, system_prompt, user_prompt)
                 result = _validate_schema(schema, _parse_json(raw))
-                _record_llm_usage(self.client, task, "ok", prompt_tokens, raw, started)
-                span.set_attribute("llm.status", "ok")
+                _record_llm_usage(self.client, task, "success", prompt_tokens, raw, started)
+                span.set_attribute("llm.status", "success")
                 span.set_attribute("llm.completion_tokens", _estimate_tokens(raw))
                 return result
             except Exception as exc:
+                safe_error = str(redact_sensitive(str(exc)))
                 _record_llm_usage(self.client, task, "failed", prompt_tokens, raw, started)
                 span.set_attribute("llm.status", "failed")
+                span.set_attribute("error.message", safe_error)
                 span.record_exception(exc)
                 raise
 

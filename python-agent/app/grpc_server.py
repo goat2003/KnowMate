@@ -194,7 +194,7 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
                 raise
             finally:
                 duration = time.perf_counter() - started
-                METRICS.record_agent_run("grpc.ProcessArticles", "ok" if status == "OK" else "failed", duration)
+                METRICS.record_agent_run("grpc.ProcessArticles", "success" if status == "OK" else "failed", duration)
                 METRICS.record_grpc_server("ProcessArticles", status, duration)
                 clear_run_id()
 
@@ -288,7 +288,7 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
                 raise
             finally:
                 duration = time.perf_counter() - started
-                METRICS.record_agent_run("grpc.ProcessFeedback", "ok" if status == "OK" else "failed", duration)
+                METRICS.record_agent_run("grpc.ProcessFeedback", "success" if status == "OK" else "failed", duration)
                 METRICS.record_grpc_server("ProcessFeedback", status, duration)
                 clear_run_id()
 
