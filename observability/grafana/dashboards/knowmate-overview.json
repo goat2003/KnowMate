@@ -74,7 +74,8 @@
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -85,6 +86,49 @@
         "y": 0
       },
       "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(knowmate_task_runs_total{status=~\"failed|partially_completed\"}[5m])) / clamp_min(sum(rate(knowmate_task_runs_total[5m])), 1)",
+          "legendFormat": "failure rate",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Task Failure Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 3,
       "options": {
         "legend": {
           "displayMode": "list",
@@ -116,71 +160,9 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "sum(up{job=~\"goframe-backend|python-agent|mcp-servers|otel-collector\"} == 0)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Services Down",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "mode": "palette-classic"
           },
-          "unit": "ops"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -205,13 +187,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(knowmate_agent_runs_total[5m])) by (status)",
-          "legendFormat": "{{status}}",
+          "expr": "histogram_quantile(0.95, sum by (le, agent) (rate(knowmate_agent_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{agent}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Agent Runs",
+      "title": "Agent Duration P95",
       "type": "timeseries"
     },
     {
@@ -249,13 +231,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(knowmate_mcp_tool_duration_seconds_bucket[5m])) by (le, tool_name))",
-          "legendFormat": "{{tool_name}}",
+          "expr": "sum by (server, tool) (rate(knowmate_mcp_tool_calls_total{status!=\"success\"}[5m])) / clamp_min(sum by (server, tool) (rate(knowmate_mcp_tool_calls_total[5m])), 1)",
+          "legendFormat": "{{server}} / {{tool}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "MCP Tool P95 Latency",
+      "title": "MCP Tool Failure Rate",
       "type": "timeseries"
     },
     {
@@ -299,7 +281,7 @@
           "refId": "A"
         }
       ],
-      "title": "LLM Cost (1h Increase)",
+      "title": "LLM Cost USD",
       "type": "timeseries"
     },
     {
@@ -338,19 +320,12 @@
         {
           "editorMode": "code",
           "expr": "histogram_quantile(0.95, sum(rate(knowmate_grpc_client_duration_seconds_bucket[5m])) by (le, method))",
-          "legendFormat": "client {{method}}",
+          "legendFormat": "{{method}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(knowmate_grpc_server_duration_seconds_bucket[5m])) by (le, method))",
-          "legendFormat": "server {{method}}",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "gRPC P95 Latency",
+      "title": "gRPC Client P95",
       "type": "timeseries"
     },
     {
@@ -388,13 +363,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(knowmate_recommendation_items_total{outcome=\"retained\"}[30m])) / clamp_min(sum(rate(knowmate_recommendation_items_total[30m])), 0.001)",
-          "legendFormat": "retention",
+          "expr": "sum by (method) (rate(knowmate_grpc_server_requests_total{status_code!=\"OK\"}[5m])) / clamp_min(sum by (method) (rate(knowmate_grpc_server_requests_total[5m])), 1)",
+          "legendFormat": "{{method}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Recommendation Retention",
+      "title": "gRPC Server Failure Rate",
       "type": "timeseries"
     },
     {
@@ -407,7 +382,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "ops"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -432,20 +407,145 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(knowmate_posts_generated_total[15m])) by (status)",
-          "legendFormat": "posts {{status}}",
+          "expr": "histogram_quantile(0.95, sum(rate(knowmate_mcp_tool_duration_seconds_bucket[5m])) by (le, tool_name))",
+          "legendFormat": "{{tool_name}}",
           "range": true,
           "refId": "A"
+        }
+      ],
+      "title": "MCP Tool P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percentunit"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(knowmate_recommendation_items_total{outcome=\"retained\"}[30m])) / clamp_min(sum(rate(knowmate_recommendation_items_total[30m])), 0.001)",
+          "legendFormat": "retention",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Recommendation Retention",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(knowmate_posts_generated_total{status=\"success\"}[10m])) / clamp_min(sum(rate(knowmate_posts_generated_total{status=~\"success|failed\"}[10m])), 1)",
+          "legendFormat": "success rate",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Post Generation Success",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
         {
           "editorMode": "code",
           "expr": "sum(rate(knowmate_feedback_received_total[15m])) by (status)",
-          "legendFormat": "feedback {{status}}",
+          "legendFormat": "{{status}}",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Posts and Feedback",
+      "title": "User Feedback Events",
       "type": "timeseries"
     }
   ],
