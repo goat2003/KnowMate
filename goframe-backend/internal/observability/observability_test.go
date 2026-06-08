@@ -146,6 +146,13 @@ func TestOptionsFromEnvPreservesOTLPEndpointTransport(t *testing.T) {
 			if opts.OTLPInsecure != tt.insecure {
 				t.Fatalf("OTLPInsecure = %v, want %v", opts.OTLPInsecure, tt.insecure)
 			}
+			endpoint, insecure := normalizeOTLPOptions(opts)
+			if endpoint != tt.endpoint {
+				t.Fatalf("normalized endpoint = %q, want %q", endpoint, tt.endpoint)
+			}
+			if insecure != tt.insecure {
+				t.Fatalf("normalized insecure = %v, want %v", insecure, tt.insecure)
+			}
 		})
 	}
 }

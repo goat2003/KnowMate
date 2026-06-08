@@ -30,10 +30,11 @@ const (
 type ShutdownFunc func(context.Context) error
 
 type Options struct {
-	ServiceName  string
-	OTLPEndpoint string
-	OTLPInsecure bool
-	Enabled      bool
+	ServiceName     string
+	OTLPEndpoint    string
+	OTLPInsecure    bool
+	OTLPInsecureSet bool
+	Enabled         bool
 }
 
 type runIDContextKey struct{}
@@ -56,10 +57,7 @@ func Init(ctx context.Context, opts Options) (ShutdownFunc, error) {
 		serviceName = "knowmate"
 	}
 
-	endpoint, insecureTransport := normalizeOTLPEndpoint(opts.OTLPEndpoint)
-	if opts.OTLPInsecure {
-		insecureTransport = true
-	}
+	endpoint, insecureTransport := normalizeOTLPOptions(opts)
 	exporterOptions := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
 	if insecureTransport {
 		exporterOptions = append(exporterOptions, otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()))
@@ -233,10 +231,11 @@ func OptionsFromEnv(serviceName string) Options {
 	}
 	endpoint, insecureTransport := normalizeOTLPEndpoint(endpoint)
 	return Options{
-		ServiceName:  serviceName,
-		OTLPEndpoint: endpoint,
-		OTLPInsecure: insecureTransport,
-		Enabled:      EnabledFromEnv(),
+		ServiceName:     serviceName,
+		OTLPEndpoint:    endpoint,
+		OTLPInsecure:    insecureTransport,
+		OTLPInsecureSet: true,
+		Enabled:         EnabledFromEnv(),
 	}
 }
 
@@ -266,6 +265,14 @@ func normalizeOTLPEndpoint(endpoint string) (string, bool) {
 	default:
 		return endpoint, true
 	}
+}
+
+func normalizeOTLPOptions(opts Options) (string, bool) {
+	endpoint, insecureTransport := normalizeOTLPEndpoint(opts.OTLPEndpoint)
+	if opts.OTLPInsecureSet {
+		insecureTransport = opts.OTLPInsecure
+	}
+	return endpoint, insecureTransport
 }
 
 func isSensitiveKey(key string) bool {
