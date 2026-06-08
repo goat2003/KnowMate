@@ -179,7 +179,7 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
         started = time.perf_counter()
         status = "OK"
         set_run_id(request.run_id)
-        with tracer(__name__).start_as_current_span("grpc.ProcessArticles") as span:
+        with tracer(__name__).start_as_current_span("AgentService.ProcessArticles") as span:
             span.set_attribute("run_id", request.run_id)
             span.set_attribute("article_count", len(request.articles))
             try:
@@ -273,7 +273,7 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
         started = time.perf_counter()
         status = "OK"
         set_run_id(request.run_id)
-        with tracer(__name__).start_as_current_span("grpc.ProcessFeedback") as span:
+        with tracer(__name__).start_as_current_span("AgentService.ProcessFeedback") as span:
             span.set_attribute("run_id", request.run_id)
             span.set_attribute("feedback_count", len(request.feedback))
             try:

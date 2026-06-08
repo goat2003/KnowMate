@@ -41,3 +41,35 @@ class GrpcObservabilityTest(unittest.TestCase):
 
         self.assertEqual(seen_run_ids, ["grpc-observe"])
         self.assertIn(current_run_id(), ("", None))
+
+    def test_process_feedback_sets_and_clears_run_context(self) -> None:
+        service = AgentService(Settings(mock_mcp=True))
+        seen_run_ids: list[str | None] = []
+        original = service.workflow.process_feedback
+
+        def wrapped(request):
+            seen_run_ids.append(current_run_id())
+            return original(request)
+
+        service.workflow.process_feedback = wrapped
+
+        service.ProcessFeedback(
+            agent_pb2.ProcessFeedbackRequest(
+                run_id="grpc-feedback-observe",
+                mcp_policy=agent_pb2.McpPolicy(mock_transport=True),
+                feedback=[
+                    agent_pb2.FeedbackItem(
+                        feedback_id="f1",
+                        user_id="u1",
+                        article_id="a1",
+                        feedback_text="useful",
+                        feedback_type="like",
+                        rating=5,
+                    )
+                ],
+            ),
+            None,
+        )
+
+        self.assertEqual(seen_run_ids, ["grpc-feedback-observe"])
+        self.assertIn(current_run_id(), ("", None))
