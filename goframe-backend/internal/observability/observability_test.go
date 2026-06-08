@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -43,6 +44,30 @@ func TestRedactSensitiveMasksNestedValues(t *testing.T) {
 	}
 }
 
+func TestRedactSensitiveMasksTypedContainers(t *testing.T) {
+	input := map[string]any{
+		"headers": http.Header{
+			"Authorization": []string{"Bearer header-secret"},
+			"Cookie":        []string{"session=abc"},
+		},
+		"nested": []map[string]any{
+			{"token": "nested-token"},
+		},
+	}
+
+	encoded, err := json.Marshal(RedactSensitive(input))
+	if err != nil {
+		t.Fatalf("marshal redacted value: %v", err)
+	}
+	text := string(encoded)
+
+	for _, secret := range []string{"header-secret", "session=abc", "nested-token"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("secret %q leaked in %s", secret, text)
+		}
+	}
+}
+
 func TestRunIDContextRoundTrip(t *testing.T) {
 	ctx := WithRunID(context.Background(), "articles-run")
 	if got := RunIDFromContext(ctx); got != "articles-run" {
@@ -54,6 +79,8 @@ func TestRunIDContextRoundTrip(t *testing.T) {
 }
 
 func TestJSONLogRecordIncludesTraceAndRunID(t *testing.T) {
+	installTestOTel(t)
+
 	ctx := WithRunID(context.Background(), "run-log")
 	ctx, span := otel.Tracer("test").Start(ctx, "log-test")
 	defer span.End()
@@ -80,6 +107,8 @@ func TestJSONLogRecordIncludesTraceAndRunID(t *testing.T) {
 }
 
 func TestTraceHeadersRoundTripThroughPropagator(t *testing.T) {
+	installTestOTel(t)
+
 	carrier := propagation.HeaderCarrier(http.Header{})
 	ctx := context.Background()
 	ctx, span := otel.Tracer("test").Start(ctx, "inject-test")
@@ -93,6 +122,34 @@ func TestTraceHeadersRoundTripThroughPropagator(t *testing.T) {
 	}
 }
 
+func TestOptionsFromEnvPreservesOTLPEndpointTransport(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		endpoint string
+		insecure bool
+	}{
+		{name: "http", raw: "http://collector:4317", endpoint: "collector:4317", insecure: true},
+		{name: "https", raw: "HTTPS://collector.example:4317", endpoint: "collector.example:4317", insecure: false},
+		{name: "plain", raw: "collector:4317", endpoint: "collector:4317", insecure: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OTEL_ENABLED", "true")
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", tt.raw)
+
+			opts := OptionsFromEnv("goframe-backend")
+			if opts.OTLPEndpoint != tt.endpoint {
+				t.Fatalf("endpoint = %q, want %q", opts.OTLPEndpoint, tt.endpoint)
+			}
+			if opts.OTLPInsecure != tt.insecure {
+				t.Fatalf("OTLPInsecure = %v, want %v", opts.OTLPInsecure, tt.insecure)
+			}
+		})
+	}
+}
+
 func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	ResetMetricsForTest()
 	RecordTaskRun(context.Background(), "articles", "completed", 1.2)
@@ -101,6 +158,10 @@ func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	RecordRecommendation(context.Background(), "kept", 2)
 	RecordPostGenerated(context.Background(), "success", 1)
 	RecordUserFeedback(context.Background(), "text", "received", 1)
+	RecordCrawlerArticle(context.Background(), "rss", "feed", "ignored", 0)
+	RecordRecommendation(context.Background(), "dropped", -1)
+	RecordPostGenerated(context.Background(), "failed", -1)
+	RecordUserFeedback(context.Background(), "text", "ignored", 0)
 
 	recorder := httptest.NewRecorder()
 	MetricsHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", bytes.NewReader(nil)))
@@ -122,4 +183,40 @@ func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 			t.Fatalf("missing %s in %s", metric, body)
 		}
 	}
+	for _, line := range []string{
+		`knowmate_task_runs_total{status="completed",task_type="articles"} 1`,
+		`knowmate_task_duration_seconds_count{status="completed",task_type="articles"} 1`,
+		`knowmate_crawler_articles_total{source="rss",status="fetched",type="feed"} 3`,
+		`knowmate_grpc_client_requests_total{method="AgentService/ProcessArticles",status_code="OK"} 1`,
+		`knowmate_grpc_client_duration_seconds_count{method="AgentService/ProcessArticles",status_code="OK"} 1`,
+		`knowmate_recommendation_items_total{decision="kept"} 2`,
+		`knowmate_posts_generated_total{status="success"} 1`,
+		`knowmate_feedback_received_total{feedback_type="text",status="received"} 1`,
+	} {
+		if !strings.Contains(body, line) {
+			t.Fatalf("missing metric line %q in %s", line, body)
+		}
+	}
+	for _, absent := range []string{"ignored", "dropped", "failed"} {
+		if strings.Contains(body, absent) {
+			t.Fatalf("unexpected non-positive counter label %q in %s", absent, body)
+		}
+	}
+}
+
+func installTestOTel(t *testing.T) {
+	t.Helper()
+
+	previousPropagator := otel.GetTextMapPropagator()
+	previousProvider := otel.GetTracerProvider()
+	t.Cleanup(func() {
+		otel.SetTextMapPropagator(previousPropagator)
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	otel.SetTracerProvider(sdktrace.NewTracerProvider())
 }

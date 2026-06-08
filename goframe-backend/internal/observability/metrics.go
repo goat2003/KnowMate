@@ -47,6 +47,9 @@ func RecordTaskRun(_ context.Context, taskType, status string, durationSeconds f
 }
 
 func RecordCrawlerArticle(_ context.Context, source, articleType, status string, count int) {
+	if count <= 0 {
+		return
+	}
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.crawlerArticles.WithLabelValues(source, articleType, status).Add(float64(count))
@@ -60,18 +63,27 @@ func RecordGRPCClient(_ context.Context, method, statusCode string, durationSeco
 }
 
 func RecordRecommendation(_ context.Context, decision string, count int) {
+	if count <= 0 {
+		return
+	}
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.recommendationItems.WithLabelValues(decision).Add(float64(count))
 }
 
 func RecordPostGenerated(_ context.Context, status string, count int) {
+	if count <= 0 {
+		return
+	}
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.postsGenerated.WithLabelValues(status).Add(float64(count))
 }
 
 func RecordUserFeedback(_ context.Context, feedbackType, status string, count int) {
+	if count <= 0 {
+		return
+	}
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.feedbackReceived.WithLabelValues(feedbackType, status).Add(float64(count))

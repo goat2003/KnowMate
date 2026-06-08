@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -30,6 +32,7 @@ type ShutdownFunc func(context.Context) error
 type Options struct {
 	ServiceName  string
 	OTLPEndpoint string
+	OTLPInsecure bool
 	Enabled      bool
 }
 
@@ -40,11 +43,6 @@ var (
 	keyValuePattern = regexp.MustCompile(`(?i)(api[_-]?key|authorization|token|password|secret|cookie|refresh[_-]?token)=([^&\s,;]+)`)
 	mysqlDSNPattern = regexp.MustCompile(`([^:\s/@]+):([^@\s]+)@tcp\(`)
 )
-
-func init() {
-	configurePropagator()
-	otel.SetTracerProvider(sdktrace.NewTracerProvider())
-}
 
 func Init(ctx context.Context, opts Options) (ShutdownFunc, error) {
 	configurePropagator()
@@ -58,11 +56,17 @@ func Init(ctx context.Context, opts Options) (ShutdownFunc, error) {
 		serviceName = "knowmate"
 	}
 
-	endpoint := normalizeOTLPEndpoint(opts.OTLPEndpoint)
-	exp, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()),
-	)
+	endpoint, insecureTransport := normalizeOTLPEndpoint(opts.OTLPEndpoint)
+	if opts.OTLPInsecure {
+		insecureTransport = true
+	}
+	exporterOptions := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	if insecureTransport {
+		exporterOptions = append(exporterOptions, otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()))
+	} else {
+		exporterOptions = append(exporterOptions, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+	}
+	exp, err := otlptracegrpc.New(ctx, exporterOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +136,8 @@ func WriteJSONLog(w io.Writer, ctx context.Context, service, level, message stri
 
 func RedactSensitive(value any) any {
 	switch typed := value.(type) {
+	case http.Header:
+		return RedactSensitive(map[string][]string(typed))
 	case map[string]any:
 		redacted := make(map[string]any, len(typed))
 		for key, item := range typed {
@@ -142,6 +148,16 @@ func RedactSensitive(value any) any {
 			redacted[key] = RedactSensitive(item)
 		}
 		return redacted
+	case map[string][]string:
+		redacted := make(map[string][]string, len(typed))
+		for key, item := range typed {
+			if isSensitiveKey(key) {
+				redacted[key] = []string{redactedMarker}
+				continue
+			}
+			redacted[key] = RedactSensitive(item).([]string)
+		}
+		return redacted
 	case map[string]string:
 		redacted := make(map[string]string, len(typed))
 		for key, item := range typed {
@@ -150,6 +166,18 @@ func RedactSensitive(value any) any {
 				continue
 			}
 			redacted[key] = redactString(item)
+		}
+		return redacted
+	case []map[string]any:
+		redacted := make([]map[string]any, len(typed))
+		for i, item := range typed {
+			redacted[i] = RedactSensitive(item).(map[string]any)
+		}
+		return redacted
+	case []map[string]string:
+		redacted := make([]map[string]string, len(typed))
+		for i, item := range typed {
+			redacted[i] = RedactSensitive(item).(map[string]string)
 		}
 		return redacted
 	case []any:
@@ -203,9 +231,11 @@ func OptionsFromEnv(serviceName string) Options {
 	if endpoint == "" {
 		endpoint = defaultOTLPEndpoint
 	}
+	endpoint, insecureTransport := normalizeOTLPEndpoint(endpoint)
 	return Options{
 		ServiceName:  serviceName,
 		OTLPEndpoint: endpoint,
+		OTLPInsecure: insecureTransport,
 		Enabled:      EnabledFromEnv(),
 	}
 }
@@ -222,14 +252,20 @@ func TraceMiddleware(service string) func(http.Handler) http.Handler {
 	}
 }
 
-func normalizeOTLPEndpoint(endpoint string) string {
+func normalizeOTLPEndpoint(endpoint string) (string, bool) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
-		return defaultOTLPEndpoint
+		return defaultOTLPEndpoint, true
 	}
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	return endpoint
+	lower := strings.ToLower(endpoint)
+	switch {
+	case strings.HasPrefix(lower, "http://"):
+		return endpoint[len("http://"):], true
+	case strings.HasPrefix(lower, "https://"):
+		return endpoint[len("https://"):], false
+	default:
+		return endpoint, true
+	}
 }
 
 func isSensitiveKey(key string) bool {
