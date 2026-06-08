@@ -1,0 +1,114 @@
+groups:
+  - name: knowmate-observability
+    rules:
+      - alert: KnowMateServiceDown
+        expr: up{job=~"goframe-backend|python-agent|mcp-servers|otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: KnowMate service is down
+
+      - alert: KnowMateTaskFailureRateHigh
+        expr: sum(rate(knowmate_task_runs_total{status="failure"}[5m])) / clamp_min(sum(rate(knowmate_task_runs_total[5m])), 0.001) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate task failure rate is high
+
+      - alert: KnowMateCrawlerFailureRateHigh
+        expr: sum(rate(knowmate_crawler_articles_total{status=~"failure|partial|error"}[10m])) / clamp_min(sum(rate(knowmate_crawler_articles_total[10m])), 0.001) > 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate crawler failure rate is high
+
+      - alert: KnowMateGrpcClientFailureRateHigh
+        expr: sum(rate(knowmate_grpc_client_requests_total{status=~"error|failure"}[5m])) / clamp_min(sum(rate(knowmate_grpc_client_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate gRPC client failure rate is high
+
+      - alert: KnowMateGrpcClientLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(knowmate_grpc_client_duration_seconds_bucket[5m])) by (le, method)) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate gRPC client latency is high
+
+      - alert: KnowMateGrpcServerFailureRateHigh
+        expr: sum(rate(knowmate_grpc_server_requests_total{status=~"error|failure"}[5m])) / clamp_min(sum(rate(knowmate_grpc_server_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate gRPC server failure rate is high
+
+      - alert: KnowMateGrpcServerLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(knowmate_grpc_server_duration_seconds_bucket[5m])) by (le, method)) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate gRPC server latency is high
+
+      - alert: KnowMateMcpToolFailureRateHigh
+        expr: sum(rate(knowmate_mcp_tool_calls_total{status=~"error|failure"}[5m])) / clamp_min(sum(rate(knowmate_mcp_tool_calls_total[5m])), 0.001) > 0.08
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate MCP tool failure rate is high
+
+      - alert: KnowMateMcpToolLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(knowmate_mcp_tool_duration_seconds_bucket[5m])) by (le, tool_name)) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate MCP tool latency is high
+
+      - alert: KnowMateAgentFailureRateHigh
+        expr: sum(rate(knowmate_agent_runs_total{status=~"error|failure"}[5m])) / clamp_min(sum(rate(knowmate_agent_runs_total[5m])), 0.001) > 0.08
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate agent failure rate is high
+
+      - alert: KnowMateLlmCostSpike
+        expr: increase(knowmate_llm_cost_usd_total[1h]) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate LLM cost spiked
+
+      - alert: KnowMateRecommendationRetentionLow
+        expr: sum(rate(knowmate_recommendation_items_total{outcome=~"dropped|filtered"}[30m])) / clamp_min(sum(rate(knowmate_recommendation_items_total[30m])), 0.001) > 0.6
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate recommendation retention is low
+
+      - alert: KnowMatePostGenerationFailureHigh
+        expr: sum(rate(knowmate_posts_generated_total{status=~"error|failure"}[15m])) / clamp_min(sum(rate(knowmate_posts_generated_total[15m])), 0.001) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate post generation failure rate is high
+
+      - alert: KnowMateFeedbackProcessingFailureHigh
+        expr: sum(rate(knowmate_feedback_received_total{status=~"error|failure"}[15m])) / clamp_min(sum(rate(knowmate_feedback_received_total[15m])), 0.001) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate feedback processing failure rate is high

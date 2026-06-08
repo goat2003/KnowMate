@@ -26,6 +26,11 @@ services:
     environment:
       MCP_SERVER: embedding-mcp
       MCP_TRANSPORT: streamable_http
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-embedding-mcp
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-memory}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-3072}
@@ -56,6 +61,11 @@ services:
     environment:
       MCP_SERVER: fetch-mcp
       MCP_TRANSPORT: streamable_http
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-fetch-mcp
       FETCH_MOCK_MODE: "true"
     ports:
       - "${FETCH_MCP_PORT:-7002}:7002"
@@ -72,6 +82,11 @@ services:
     environment:
       MCP_SERVER: milvus-mcp
       MCP_TRANSPORT: streamable_http
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-milvus-mcp
       MILVUS_PROVIDER: ${MILVUS_PROVIDER:-memory}
       MILVUS_URI: ${MILVUS_URI:-http://milvus-standalone:19530}
       MILVUS_TOKEN: ${MILVUS_TOKEN:-}
@@ -94,6 +109,11 @@ services:
     environment:
       MCP_SERVER: neo4j-mcp
       MCP_TRANSPORT: streamable_http
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-neo4j-mcp
       NEO4J_PROVIDER: ${NEO4J_PROVIDER:-memory}
       NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
@@ -196,6 +216,11 @@ services:
     environment:
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: 50051
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-python-agent
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       MOCK_MCP: "false"
       EMBEDDING_MCP_TRANSPORT: streamable_http
@@ -217,6 +242,8 @@ services:
         condition: service_healthy
       neo4j-mcp:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc,agent_pb2,agent_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:50051'); agent_pb2_grpc.AgentServiceStub(c).HealthCheck(agent_pb2.HealthCheckRequest(client='docker'), timeout=3)"]
       interval: 5s
@@ -231,6 +258,11 @@ services:
     environment:
       GOFRAME_HTTP_ADDR: :8080
       AGENT_GRPC_ADDR: python-agent:50051
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=knowmate
+      OTEL_SERVICE_NAME: knowmate-goframe-backend
       MYSQL_DSN: "${MYSQL_USER:-app}:${MYSQL_PASSWORD:-apppass}@tcp(mysql:3306)/${MYSQL_DATABASE:-knowledge_post_agent}?charset=utf8mb4&parseTime=true&loc=Local"
       SCHEMA_PATH: /app/shared/sql/init.sql
       OUTPUT_DIR: /app/shared/outputs
@@ -243,9 +275,101 @@ services:
         condition: service_healthy
       python-agent:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 5s
+      timeout: 5s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.63.0
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "4317:4317"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "8888:8888"
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8888/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      alertmanager:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
       timeout: 5s
       retries: 20
 
@@ -256,3 +380,5 @@ volumes:
   milvus-data:
   neo4j-data:
   neo4j-logs:
+  prometheus-data:
+  grafana-data:

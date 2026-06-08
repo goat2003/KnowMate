@@ -1,0 +1,5 @@
+route:
+  receiver: local-null
+
+receivers:
+  - name: local-null

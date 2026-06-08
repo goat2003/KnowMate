@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: knowmate
+    orgId: 1
+    folder: KnowMate
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
