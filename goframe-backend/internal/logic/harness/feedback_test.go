@@ -2,11 +2,13 @@ package harness
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"knowledge-post-agent/goframe-backend/internal/agentpb"
 	"knowledge-post-agent/goframe-backend/internal/config"
 	"knowledge-post-agent/goframe-backend/internal/model"
+	"knowledge-post-agent/goframe-backend/internal/observability"
 )
 
 func TestProcessFeedbackReturnsCompletedResultForDuplicateFeedback(t *testing.T) {
@@ -77,6 +79,29 @@ func TestProfileRebuildReplaysStructuredFeedback(t *testing.T) {
 	}
 	if store.profiles[0].Snapshot["topics"] == "" || store.profiles[0].Snapshot["style_preferences"] == "" {
 		t.Fatalf("expected rebuilt profile details, got %#v", store.profiles[0].Snapshot)
+	}
+}
+
+func TestProcessFeedbackRecordsFeedbackAndTaskMetrics(t *testing.T) {
+	observability.ResetMetricsForTest()
+	store := newFeedbackFakeStore()
+	h := newWithDependencies(config.Config{Profile: config.ProfileConfig{UserID: "u1"}}, store, &fakeSourceCrawler{})
+	h.processFeedbackFunc = store.processFeedback
+
+	result := h.ProcessFeedback(context.Background(), FeedbackRequest{PostID: "p1", ArticleID: "a1", UserID: "u1", FeedbackText: "useful", FeedbackType: "text", Rating: 5})
+
+	if result.Status != TaskStatusCompleted {
+		t.Fatalf("expected completed feedback result, got %#v", result)
+	}
+	body := metricsBody(t)
+	for _, want := range []string{
+		`knowmate_feedback_received_total{feedback_type="text",status="received"} 1`,
+		`knowmate_feedback_received_total{feedback_type="text",status="processed"} 1`,
+		`knowmate_task_runs_total{status="completed",task_type="feedback"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing metric %q in:\n%s", want, body)
+		}
 	}
 }
 

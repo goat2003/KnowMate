@@ -58,6 +58,7 @@ import (
 	"knowledge-post-agent/goframe-backend/internal/grpcclient"
 	// model 定义数据库模型。
 	"knowledge-post-agent/goframe-backend/internal/model"
+	"knowledge-post-agent/goframe-backend/internal/observability"
 	// store 是 MySQL 数据访问层。
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -700,11 +701,16 @@ func (h *Harness) RunArticles(ctx context.Context) RunArticlesResult {
 }
 
 func (h *Harness) runArticles(ctx context.Context, runID string, existing *model.TaskRun) RunArticlesResult {
+	startedAt := time.Now()
+	ctx = observability.WithRunID(ctx, runID)
 	userID := h.cfg.Profile.UserID
 	if existing != nil && existing.UserID != "" {
 		userID = existing.UserID
 	}
 	result := RunArticlesResult{RunID: runID, Status: TaskStatusPending}
+	defer func() {
+		observability.RecordTaskRun(ctx, TaskTypeArticles, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+	}()
 	task, err := h.startTask(ctx, model.TaskRun{
 		RunID:          runID,
 		TaskType:       TaskTypeArticles,
@@ -894,8 +900,13 @@ func (h *Harness) ProcessFeedback(ctx context.Context, req FeedbackRequest) Feed
 }
 
 func (h *Harness) processFeedback(ctx context.Context, runID string, existing *model.TaskRun, req FeedbackRequest) FeedbackResult {
+	startedAt := time.Now()
+	ctx = observability.WithRunID(ctx, runID)
 	// 初始化反馈任务结果。
 	result := FeedbackResult{RunID: runID, Status: TaskStatusPending}
+	defer func() {
+		observability.RecordTaskRun(ctx, TaskTypeFeedback, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+	}()
 	// userID 优先使用请求值，缺失时用配置默认用户。
 	userID := firstNonEmpty(req.UserID, h.cfg.Profile.UserID)
 	// feedback_type 缺失时默认 text。
@@ -962,6 +973,9 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 		h.writeFeedbackRunLog(ctx, result, TaskStatusFailed, result.Error)
 		return result
 	}
+	if inserted {
+		observability.RecordUserFeedback(ctx, req.FeedbackType, "received", 1)
+	}
 	if !inserted && record.ProcessStatus == "completed" {
 		result.RunID = record.RunID
 		result.Status = TaskStatusCompleted
@@ -975,6 +989,7 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 	steps.add("save_feedback", StepStatusCompleted, "feedback log saved")
 	h.updateTaskPartial(ctx, result.RunID, "save_feedback", feedbackPartialResult(result))
 	if err := h.store.MarkFeedbackProcessing(ctx, record.ID); err != nil {
+		observability.RecordUserFeedback(ctx, req.FeedbackType, "failed", 1)
 		result.Status = TaskStatusFailed
 		result.Error = err.Error()
 		steps.add("save_feedback", StepStatusFailed, err.Error())
@@ -997,6 +1012,7 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 	response, err := h.callProcessFeedback(ctx, result.RunID, userID, req, profile, &steps)
 	if err != nil {
 		_ = h.store.MarkFeedbackFailed(ctx, record.ID, err.Error())
+		observability.RecordUserFeedback(ctx, req.FeedbackType, "failed", 1)
 		result.Status = TaskStatusFailed
 		result.Error = err.Error()
 		steps.add("process_feedback", StepStatusFailed, err.Error())
@@ -1020,6 +1036,7 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 	})
 	if err != nil {
 		_ = h.store.MarkFeedbackFailed(ctx, record.ID, err.Error())
+		observability.RecordUserFeedback(ctx, req.FeedbackType, "failed", 1)
 		result.Status = TaskStatusFailed
 		result.Error = err.Error()
 		steps.add("save_profile_version", StepStatusFailed, err.Error())
@@ -1029,6 +1046,7 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 	}
 	steps.add("save_profile_version", StepStatusCompleted, fmt.Sprintf("version=%d", snapshot.Version))
 	if err := h.store.MarkFeedbackCompleted(ctx, record.ID, response.StructuredFeedbackJson, snapshot.Version); err != nil {
+		observability.RecordUserFeedback(ctx, req.FeedbackType, "failed", 1)
 		result.Status = TaskStatusFailed
 		result.Error = err.Error()
 		steps.add("save_feedback", StepStatusFailed, err.Error())
@@ -1036,6 +1054,7 @@ func (h *Harness) processFeedback(ctx context.Context, runID string, existing *m
 		h.writeFeedbackRunLog(ctx, result, TaskStatusFailed, result.Error)
 		return result
 	}
+	observability.RecordUserFeedback(ctx, req.FeedbackType, "processed", 1)
 
 	// 转换并写入反馈流程产生的 MCP 调用日志。
 	logs := protoMcpLogs(result.RunID, response.McpCallLogs)
@@ -1075,11 +1094,16 @@ func (h *Harness) RebuildProfile(ctx context.Context, req RebuildProfileRequest)
 }
 
 func (h *Harness) rebuildProfile(ctx context.Context, runID string, existing *model.TaskRun, req RebuildProfileRequest) RebuildProfileResult {
+	startedAt := time.Now()
+	ctx = observability.WithRunID(ctx, runID)
 	result := RebuildProfileResult{
 		RunID:  runID,
 		Status: TaskStatusPending,
 		UserID: firstNonEmpty(req.UserID, h.cfg.Profile.UserID),
 	}
+	defer func() {
+		observability.RecordTaskRun(ctx, TaskTypeProfileRebuild, metricTaskStatus(result.Status), time.Since(startedAt).Seconds())
+	}()
 	task, err := h.startTask(ctx, model.TaskRun{
 		RunID:          runID,
 		TaskType:       TaskTypeProfileRebuild,
@@ -1224,6 +1248,7 @@ func (h *Harness) fetchArticles(ctx context.Context, runID string, steps *stepRe
 		if result.Status == "" {
 			result.Status = "success"
 		}
+		observability.RecordCrawlerArticle(ctx, result.Source.Name, string(result.Source.Type), result.Status, metricSourceItemCount(result))
 		finishedAt := time.Now().UTC()
 		_ = h.store.UpsertCrawlSourceRun(ctx, sourceRunModel(runID, result, startedAt, &finishedAt, 0))
 		results = append(results, result)
@@ -1262,6 +1287,22 @@ func sourceRunModel(runID string, result crawler.SourceResult, startedAt time.Ti
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
 	}
+}
+
+func metricTaskStatus(status string) string {
+	switch status {
+	case TaskStatusCompleted, TaskStatusFailed, TaskStatusPartiallyCompleted, TaskStatusCancelled:
+		return status
+	default:
+		return TaskStatusFailed
+	}
+}
+
+func metricSourceItemCount(result crawler.SourceResult) int {
+	if result.ItemsFound > len(result.Articles) {
+		return result.ItemsFound
+	}
+	return len(result.Articles)
 }
 
 func allSourcesFailed(results []crawler.SourceResult) bool {
@@ -1737,6 +1778,12 @@ func (h *Harness) persistAgentResults(ctx context.Context, runID string, respons
 	for _, item := range response.Results {
 		// protobuf 日志先转换成 model.McpCallLog，后续批量写库。
 		mcpLogs = append(mcpLogs, protoMcpLogs(runID, item.McpCallLogs)...)
+		if item.Keep {
+			observability.RecordRecommendation(ctx, "kept", 1)
+		} else {
+			observability.RecordRecommendation(ctx, "dropped", 1)
+			observability.RecordPostGenerated(ctx, "skipped", 1)
+		}
 		// FilterAgent 不保留的文章不生成 posts。
 		if !item.Keep {
 			continue
@@ -1771,12 +1818,19 @@ func (h *Harness) persistAgentResults(ctx context.Context, runID string, respons
 		}
 		// 没有 Markdown 内容时跳过，避免写入空 post。
 		if post.Markdown == "" {
+			observability.RecordPostGenerated(ctx, "failed", 1)
 			continue
 		}
 		// 写入 posts 表。
 		if err := h.store.InsertPost(ctx, post); err != nil {
+			observability.RecordPostGenerated(ctx, "failed", 1)
 			steps.add("save_post:"+item.ArticleId, "failed", err.Error())
 			continue
+		}
+		if item.CheckPass {
+			observability.RecordPostGenerated(ctx, "success", 1)
+		} else {
+			observability.RecordPostGenerated(ctx, "failed", 1)
 		}
 		posts = append(posts, post)
 	}

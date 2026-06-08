@@ -2,12 +2,15 @@ package harness
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"knowledge-post-agent/goframe-backend/internal/agentpb"
 	"knowledge-post-agent/goframe-backend/internal/config"
 	"knowledge-post-agent/goframe-backend/internal/crawler"
 	"knowledge-post-agent/goframe-backend/internal/model"
+	"knowledge-post-agent/goframe-backend/internal/observability"
 )
 
 func TestFetchSourcesContinuesAfterFailureAndPersistsRuns(t *testing.T) {
@@ -116,6 +119,57 @@ func TestPersistAgentResultsStoresRecommendationExplanationMetadata(t *testing.T
 	if metadata["score_breakdown"] == nil || metadata["recommendation_reasons"] == nil {
 		t.Fatalf("missing explanation detail: %#v", metadata)
 	}
+}
+
+func TestRunArticlesRecordsTaskAndCrawlerMetrics(t *testing.T) {
+	observability.ResetMetricsForTest()
+	store := &fakeArticleStore{}
+	sourceClient := &fakeSourceCrawler{results: map[string]crawler.SourceResult{
+		"working": {
+			Source: crawler.Source{Name: "working", Type: crawler.SourceTypeMock},
+			Status: "success",
+			Articles: []model.Article{{
+				ID: "article-working", Source: "working", SourceType: "mock", FetchStatus: "success", Content: "processable content",
+			}},
+			ItemsFound: 1,
+		},
+	}}
+	cfg := testCrawlerConfig("working")
+	cfg.Crawler.Sources[0].Type = "mock"
+	harness := newWithDependencies(cfg, store, sourceClient)
+	harness.processArticlesFunc = func(context.Context, string, []model.Article, map[string]string, *stepRecorder) (*agentpb.ProcessArticlesResponse, error) {
+		return &agentpb.ProcessArticlesResponse{Results: []*agentpb.ArticleProcessResult{{
+			ArticleId: "article-working",
+			Keep:      true,
+			PostText:  "post body",
+			CheckPass: true,
+		}}}, nil
+	}
+
+	result := harness.RunArticles(context.Background())
+
+	if result.Status != TaskStatusCompleted {
+		t.Fatalf("expected completed result, got %#v", result)
+	}
+	body := metricsBody(t)
+	for _, want := range []string{
+		`knowmate_task_runs_total{status="completed",task_type="articles"} 1`,
+		`knowmate_crawler_articles_total{source="working",status="success",type="mock"} 1`,
+		`knowmate_recommendation_items_total{decision="kept"} 1`,
+		`knowmate_posts_generated_total{status="success"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing metric %q in:\n%s", want, body)
+		}
+	}
+}
+
+func metricsBody(t *testing.T) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	observability.MetricsHandler().ServeHTTP(rec, req)
+	return rec.Body.String()
 }
 
 func testCrawlerConfig(sourceNames ...string) config.Config {

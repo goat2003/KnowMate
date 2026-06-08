@@ -33,6 +33,7 @@ import (
 	// harness 是业务编排层，负责调用 RSS、MySQL、Python gRPC 和 Markdown 输出。
 	"knowledge-post-agent/goframe-backend/internal/logic/harness"
 	"knowledge-post-agent/goframe-backend/internal/model"
+	"knowledge-post-agent/goframe-backend/internal/observability"
 	// store 是 MySQL 数据访问层。
 	"knowledge-post-agent/goframe-backend/internal/store"
 
@@ -109,6 +110,7 @@ func (h *Handler) Register(server *ghttp.Server) {
 	server.Group("/", func(group *ghttp.RouterGroup) {
 		// GET /health 同时检查数据库和 Python Agent。
 		group.GET("/health", h.Health)
+		group.GET("/metrics", h.Metrics)
 		// POST /runs/articles 触发一次完整文章处理任务。
 		group.POST("/runs/articles", h.RunArticles)
 		// POST /feedback 接收用户反馈并触发画像更新。
@@ -138,6 +140,10 @@ func (h *Handler) Register(server *ghttp.Server) {
 //
 // 返回值：
 // - 通过 r.Response.WriteJson 写出 JSON 响应。
+func (h *Handler) Metrics(r *ghttp.Request) {
+	observability.MetricsHandler().ServeHTTP(r.Response.RawWriter(), r.Request)
+}
+
 func (h *Handler) Health(r *ghttp.Request) {
 	// 默认认为数据库可用。
 	db := g.Map{"status": "ok"}

@@ -19,12 +19,14 @@
 package main
 
 import (
+	"context"
 	// encoding/json 用于 healthcheck 命令把 Python Agent 健康检查结果格式化输出到 stdout。
 	"encoding/json"
 	// fmt 用于向 stderr 输出 healthcheck 错误。
 	"fmt"
 	// os 用于读取命令行参数、stdout/stderr 和进程退出码。
 	"os"
+	"time"
 
 	// config 负责加载 manifest/config/config.yaml 和环境变量。
 	"knowledge-post-agent/goframe-backend/internal/config"
@@ -32,6 +34,7 @@ import (
 	"knowledge-post-agent/goframe-backend/internal/handler"
 	// harness 是后端业务编排层，串联 RSS、MySQL、Python gRPC 和 Markdown 输出。
 	"knowledge-post-agent/goframe-backend/internal/logic/harness"
+	"knowledge-post-agent/goframe-backend/internal/observability"
 	// store 是 MySQL 访问层。
 	"knowledge-post-agent/goframe-backend/internal/store"
 
@@ -58,6 +61,18 @@ func main() {
 	ctx := gctx.GetInitCtx()
 	// 加载后端配置，包含 HTTP 地址、Agent gRPC 地址、MySQL DSN、RSS 源等。
 	cfg := config.Load(ctx)
+	shutdown, err := observability.Init(ctx, observability.OptionsFromEnv("goframe-backend"))
+	if err != nil {
+		g.Log().Warningf(ctx, "observability init failed: %v", err)
+	} else {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdown(shutdownCtx); err != nil {
+				g.Log().Warningf(ctx, "observability shutdown failed: %v", err)
+			}
+		}()
+	}
 
 	// 支持命令行健康检查模式：go run . healthcheck。
 	// 该模式只检查 Python Agent，不启动 HTTP 服务，适合 Docker healthcheck 或脚本检查。
