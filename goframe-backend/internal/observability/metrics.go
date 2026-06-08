@@ -43,7 +43,7 @@ func RecordTaskRun(_ context.Context, taskType, status string, durationSeconds f
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.taskRuns.WithLabelValues(taskType, status).Inc()
-	metricsState.taskDuration.WithLabelValues(taskType, status).Observe(durationSeconds)
+	metricsState.taskDuration.WithLabelValues(taskType, status).Observe(nonNegativeSeconds(durationSeconds))
 }
 
 func RecordCrawlerArticle(_ context.Context, source, articleType, status string, count int) {
@@ -59,7 +59,7 @@ func RecordGRPCClient(_ context.Context, method, statusCode string, durationSeco
 	metricsState.mu.RLock()
 	defer metricsState.mu.RUnlock()
 	metricsState.grpcClientRequests.WithLabelValues(method, statusCode).Inc()
-	metricsState.grpcClientDuration.WithLabelValues(method, statusCode).Observe(durationSeconds)
+	metricsState.grpcClientDuration.WithLabelValues(method, statusCode).Observe(nonNegativeSeconds(durationSeconds))
 }
 
 func RecordRecommendation(_ context.Context, decision string, count int) {
@@ -93,6 +93,13 @@ func ResetMetricsForTest() {
 	metricsState.mu.Lock()
 	defer metricsState.mu.Unlock()
 	metricsState.reset()
+}
+
+func nonNegativeSeconds(seconds float64) float64 {
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
 }
 
 func (s *state) reset() {

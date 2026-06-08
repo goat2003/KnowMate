@@ -160,8 +160,10 @@ func TestOptionsFromEnvPreservesOTLPEndpointTransport(t *testing.T) {
 func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	ResetMetricsForTest()
 	RecordTaskRun(context.Background(), "articles", "completed", 1.2)
+	RecordTaskRun(context.Background(), "articles", "negative", -1.2)
 	RecordCrawlerArticle(context.Background(), "rss", "feed", "fetched", 3)
 	RecordGRPCClient(context.Background(), "AgentService/ProcessArticles", "OK", 0.2)
+	RecordGRPCClient(context.Background(), "AgentService/ProcessArticles", "NEGATIVE", -0.2)
 	RecordRecommendation(context.Background(), "kept", 2)
 	RecordPostGenerated(context.Background(), "success", 1)
 	RecordUserFeedback(context.Background(), "text", "received", 1)
@@ -193,9 +195,11 @@ func TestMetricsHandlerExposesKnowmateMetric(t *testing.T) {
 	for _, line := range []string{
 		`knowmate_task_runs_total{status="completed",task_type="articles"} 1`,
 		`knowmate_task_duration_seconds_count{status="completed",task_type="articles"} 1`,
+		`knowmate_task_duration_seconds_sum{status="negative",task_type="articles"} 0`,
 		`knowmate_crawler_articles_total{source="rss",status="fetched",type="feed"} 3`,
 		`knowmate_grpc_client_requests_total{method="AgentService/ProcessArticles",status_code="OK"} 1`,
 		`knowmate_grpc_client_duration_seconds_count{method="AgentService/ProcessArticles",status_code="OK"} 1`,
+		`knowmate_grpc_client_duration_seconds_sum{method="AgentService/ProcessArticles",status_code="NEGATIVE"} 0`,
 		`knowmate_recommendation_items_total{decision="kept"} 2`,
 		`knowmate_posts_generated_total{status="success"} 1`,
 		`knowmate_feedback_received_total{feedback_type="text",status="received"} 1`,
