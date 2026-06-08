@@ -4,6 +4,11 @@ from dataclasses import asdict, dataclass
 import os
 from typing import Any, Callable, Protocol
 
+try:
+    from common.observability import METRICS, record_tool
+except ModuleNotFoundError:
+    from observability import METRICS, record_tool
+
 
 JsonDict = dict[str, Any]
 ToolHandler = Callable[[str, JsonDict], JsonDict]
@@ -73,9 +78,10 @@ def create_server(
     from mcp import types
     from mcp.server.fastmcp import FastMCP
     from starlette.requests import Request
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, PlainTextResponse
 
     config = config or {}
+    server_name = name
     server = FastMCP(
         name,
         host=os.getenv("MCP_HOST", "0.0.0.0"),
@@ -102,12 +108,16 @@ def create_server(
     async def call_tool(name: str, arguments: JsonDict) -> JsonDict:
         if name not in tool_map:
             raise ToolError(f"unknown tool `{name}`", code=-32601, data={"tool": name})
-        return handler(name, arguments)
+        return record_tool(server_name, name, lambda: handler(name, arguments))
 
     @server.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_request: Request) -> JSONResponse:
         payload, status_code = build_health_payload(name, _transport(), config, health_provider)
         return JSONResponse(payload, status_code=status_code)
+
+    @server.custom_route("/metrics", methods=["GET"], include_in_schema=False)
+    async def metrics(_request: Request) -> PlainTextResponse:
+        return PlainTextResponse(METRICS.render_text().decode("utf-8"), media_type="text/plain; version=0.0.4")
 
     return server
 

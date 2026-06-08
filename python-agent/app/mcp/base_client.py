@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-import re
 import time
 from typing import Any, Protocol
 from uuid import uuid4
@@ -12,6 +11,7 @@ from jsonschema import ValidationError, validate
 
 from app.contracts import JsonDict
 from app.mcp.policy import MCPPolicy
+from app.observability import METRICS, redact_sensitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,39 +280,6 @@ class MemoryMcpTransport:
 MockMcpTransport = MemoryMcpTransport
 
 
-_SENSITIVE_KEYS = {
-    "api_key",
-    "apikey",
-    "authorization",
-    "access_token",
-    "refresh_token",
-    "token",
-    "password",
-    "secret",
-    "credential",
-    "cookie",
-    "set-cookie",
-}
-
-
-def redact_sensitive(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(key): "[REDACTED]" if str(key).lower() in _SENSITIVE_KEYS else redact_sensitive(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [redact_sensitive(item) for item in value]
-    if isinstance(value, str):
-        value = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", value)
-        return re.sub(
-            r"(?i)\b(api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret|cookie)\s*[:=]\s*([^\s,;]+)",
-            r"\1=[REDACTED]",
-            value,
-        )
-    return value
-
-
 class BaseMcpClient:
     server_name = "mcp"
 
@@ -573,6 +540,7 @@ class BaseMcpClient:
         attempts: int,
         fallback: str,
     ) -> McpCallResult:
+        METRICS.record_mcp_tool(self.server_name, tool_name, status, latency_ms / 1000)
         return McpCallResult(
             result=result,
             log={

@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import re
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+from opentelemetry import propagate, trace
+from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+
+
+_NORMALIZED_SENSITIVE_KEYS = {
+    "apikey",
+    "authorization",
+    "proxyauthorization",
+    "xapikey",
+    "accesstoken",
+    "refreshtoken",
+    "token",
+    "password",
+    "secret",
+    "clientsecret",
+    "credential",
+    "cookie",
+    "setcookie",
+    "dsn",
+}
+_REDACTED = "[REDACTED]"
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_BASIC_AUTH_RE = re.compile(r"(?i)\bBasic\s+[A-Za-z0-9._~+/=-]+")
+_KEY_VALUE_RE = re.compile(
+    r"(?i)\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|password|secret|client[_-]?secret|credential)=([^&\s;]+)"
+)
+
+T = TypeVar("T")
+
+
+def redact_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_key(key):
+                redacted[key] = _REDACTED
+            else:
+                redacted[key] = redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        if _is_sensitive_pair(value):
+            return [value[0], _REDACTED]
+        return [redact_sensitive(item) for item in value]
+    if isinstance(value, tuple):
+        if _is_sensitive_pair(value):
+            return (value[0], _REDACTED)
+        return tuple(redact_sensitive(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return [redact_sensitive(item) for item in sorted(value, key=str)]
+    if isinstance(value, bytes):
+        return _redact_string(value.decode("utf-8", errors="replace"))
+    if isinstance(value, str):
+        return _redact_string(value)
+    if isinstance(value, BaseException):
+        return _redact_string(str(value))
+    return value
+
+
+def extract_trace_context(headers: dict[str, str]) -> Any:
+    return propagate.extract(headers)
+
+
+class Metrics:
+    def __init__(self, namespace: str = "knowmate", registry: CollectorRegistry | None = None) -> None:
+        self.registry = registry or CollectorRegistry()
+        self.mcp_tool_calls = Counter(
+            "mcp_tool_calls_total",
+            "Total MCP server tool calls.",
+            ["server", "tool", "status"],
+            namespace=namespace,
+            registry=self.registry,
+        )
+        self.mcp_tool_duration = Histogram(
+            "mcp_tool_duration_seconds",
+            "MCP server tool call duration in seconds.",
+            ["server", "tool", "status"],
+            namespace=namespace,
+            registry=self.registry,
+        )
+        self.mcp_tool_failures = Counter(
+            "mcp_tool_failures_total",
+            "Total failed MCP server tool calls.",
+            ["server", "tool"],
+            namespace=namespace,
+            registry=self.registry,
+        )
+
+    def record_tool_call(self, server: str, tool: str, status: str, duration_seconds: float) -> None:
+        labels = {"server": server, "tool": tool, "status": status}
+        self.mcp_tool_calls.labels(**labels).inc()
+        self.mcp_tool_duration.labels(**labels).observe(_non_negative_float(duration_seconds))
+        if status != "success":
+            self.mcp_tool_failures.labels(server=server, tool=tool).inc()
+
+    def render_text(self) -> bytes:
+        return generate_latest(self.registry)
+
+
+METRICS = Metrics()
+
+
+def record_tool(server_name: str, tool_name: str, handler: Callable[[], T]) -> T:
+    started = time.perf_counter()
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span(f"mcp.tool.{tool_name}") as span:
+        span.set_attribute("mcp.server", server_name)
+        span.set_attribute("mcp.tool", tool_name)
+        try:
+            result = handler()
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_attribute("mcp.status", "failed")
+            METRICS.record_tool_call(server_name, tool_name, "failed", time.perf_counter() - started)
+            raise
+        span.set_attribute("mcp.status", "success")
+        METRICS.record_tool_call(server_name, tool_name, "success", time.perf_counter() - started)
+        return result
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(key).strip().lower())
+    return (
+        normalized in _NORMALIZED_SENSITIVE_KEYS
+        or normalized.endswith("secret")
+        or normalized.endswith("password")
+        or normalized.endswith("token")
+    )
+
+
+def _is_sensitive_pair(value: list[Any] | tuple[Any, ...]) -> bool:
+    return len(value) == 2 and _is_sensitive_key(value[0])
+
+
+def _redact_string(value: str) -> str:
+    value = _BEARER_RE.sub(f"Bearer {_REDACTED}", value)
+    value = _BASIC_AUTH_RE.sub(f"Basic {_REDACTED}", value)
+    return _KEY_VALUE_RE.sub(lambda match: f"{match.group(1)}={_REDACTED}", value)
+
+
+def _non_negative_float(value: int | float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, number)

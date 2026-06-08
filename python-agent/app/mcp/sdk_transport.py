@@ -7,8 +7,11 @@ from datetime import timedelta
 import json
 import logging
 import os
+import secrets
 from threading import Thread
 from typing import Any
+
+from opentelemetry import propagate
 
 from app.config import McpServerSettings
 from app.contracts import JsonDict
@@ -94,6 +97,11 @@ class OfficialMcpTransport:
             future.cancel()
             raise TimeoutError(f"MCP call timed out after {self.timeout_seconds}s: {server_name}.{tool_name}")
 
+    def _inject_trace_headers(self, headers: dict[str, str]) -> None:
+        propagate.inject(headers)
+        if "traceparent" not in headers:
+            headers["traceparent"] = f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
+
     def _run_loop(self) -> None:
         assert self._loop is not None
         asyncio.set_event_loop(self._loop)
@@ -141,9 +149,11 @@ class OfficialMcpTransport:
                 elif config.transport == "streamable_http":
                     if not config.url:
                         raise RuntimeError(f"Missing Streamable HTTP URL for `{server_name}`")
+                    headers = dict(config.headers)
+                    self._inject_trace_headers(headers)
                     http_client = await stack.enter_async_context(
                         create_mcp_http_client(
-                            headers=config.headers or None,
+                            headers=headers or None,
                             timeout=self.timeout_seconds,
                         )
                     )
