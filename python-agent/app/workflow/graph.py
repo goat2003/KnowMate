@@ -24,6 +24,8 @@
 # 最后阅读各个 Agent 的 run 方法如何逐步补充 article_results、mcp_call_logs 和 updated_profile_snapshot。
 from __future__ import annotations
 
+import time
+
 from app.agents import CheckAgent, FeedbackAgent, FilterAgent, MemoryAgent, RewriteAgent, SummaryAgent
 from app.config import McpServerSettings, Settings
 from app.contracts import JsonDict, default_mcp_policy, ensure_run_id, normalize_article
@@ -36,6 +38,7 @@ from app.mcp import (
     Neo4jClient,
     OfficialMcpTransport,
 )
+from app.observability import METRICS, tracer
 from app.skill_loader import load_skills
 from app.tools import build_llm_tool
 from app.workflow.state import AgentState
@@ -263,7 +266,7 @@ class ArticleWorkflow:
             self.rewrite_agent,
             self.check_agent,
         ]:
-            state = agent.run(state)
+            state = _run_agent_with_observability(agent, state)
         return state
 
     # 函数作用：
@@ -277,7 +280,7 @@ class ArticleWorkflow:
     def _run_feedback_sequential(self, state: JsonDict) -> JsonDict:
         # FeedbackAgent 先提取偏好信号，MemoryAgent 再用这些信号更新用户画像。
         for agent in [self.feedback_agent, self.memory_agent]:
-            state = agent.run(state)
+            state = _run_agent_with_observability(agent, state)
         return state
 
     # 函数作用：
@@ -303,10 +306,10 @@ class ArticleWorkflow:
         # StateGraph(AgentState) 声明图中共享 state 的字段结构，便于 LangGraph 在节点间传递数据。
         graph = StateGraph(AgentState)
         # add_node 把每个 Agent 的 run 方法注册为一个节点；节点名称也是调试时看到的流程名称。
-        graph.add_node("filter", self.filter_agent.run)
-        graph.add_node("summary", self.summary_agent.run)
-        graph.add_node("rewrite", self.rewrite_agent.run)
-        graph.add_node("check", self.check_agent.run)
+        graph.add_node("filter", lambda state: _run_agent_with_observability(self.filter_agent, state))
+        graph.add_node("summary", lambda state: _run_agent_with_observability(self.summary_agent, state))
+        graph.add_node("rewrite", lambda state: _run_agent_with_observability(self.rewrite_agent, state))
+        graph.add_node("check", lambda state: _run_agent_with_observability(self.check_agent, state))
 
         # 文章流程从 filter 开始，因为后续摘要和改写只应该处理通过筛选的文章。
         graph.set_entry_point("filter")
@@ -337,15 +340,32 @@ class ArticleWorkflow:
         # 反馈流程复用 AgentState，因为它和文章流程共享 run_id、mcp_policy、mcp_call_logs 等字段。
         graph = StateGraph(AgentState)
         # feedback 节点负责把用户反馈转成结构化偏好信号。
-        graph.add_node("feedback", self.feedback_agent.run)
+        graph.add_node("feedback", lambda state: _run_agent_with_observability(self.feedback_agent, state))
         # memory 节点负责用偏好信号更新 user_profile_snapshot，并可写入 MCP 记忆系统。
-        graph.add_node("memory", self.memory_agent.run)
+        graph.add_node("memory", lambda state: _run_agent_with_observability(self.memory_agent, state))
         # 反馈流程必须先提取信息，再更新记忆。
         graph.set_entry_point("feedback")
         graph.add_edge("feedback", "memory")
         # memory 完成后流程结束，结果会包含 updated_profile_snapshot。
         graph.add_edge("memory", END)
         return graph.compile()
+
+
+def _run_agent_with_observability(agent, state: JsonDict) -> JsonDict:
+    started = time.perf_counter()
+    status = "ok"
+    agent_name = str(getattr(agent, "name", agent.__class__.__name__))
+    with tracer(__name__).start_as_current_span(f"agent.{agent_name}") as span:
+        span.set_attribute("agent", agent_name)
+        span.set_attribute("run_id", str(state.get("run_id", "")))
+        try:
+            return agent.run(state)
+        except Exception as exc:
+            status = "failed"
+            span.record_exception(exc)
+            raise
+        finally:
+            METRICS.record_agent_run(agent_name, status, time.perf_counter() - started)
 
 
 def _legacy_mcp_server_settings(settings: Settings) -> dict[str, McpServerSettings]:

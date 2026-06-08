@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 import json
 import logging
 import os
+import time
 from typing import Any, Literal, TypeVar
 from urllib import request as urlrequest
 from urllib.error import URLError
@@ -36,6 +37,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.config import ClaudeSettings, LLMSettings, OpenAISettings, Settings
 from app.contracts import JsonDict
+from app.observability import METRICS, redact_sensitive, tracer
 
 
 # LOGGER 是本模块的日志对象，用于记录 LLM 输出校验失败、repair 失败、provider 配置缺失等问题。
@@ -496,42 +498,82 @@ class LLMTool:
         payload: JsonDict,
         fallback: Any,
     ) -> SchemaT:
-        # 把业务 payload 序列化为 JSON 字符串；ensure_ascii=False 保留中文内容。
         user_prompt = json.dumps(payload, ensure_ascii=False)
-        # 第一次尝试：直接让主 provider 生成 JSON，并按 schema 校验。
+        prompt_tokens = _estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)
         try:
-            raw = self.client.complete_json(task, system_prompt, user_prompt)
-            return _validate_schema(schema, _parse_json(raw))
+            return self._complete_and_validate(task, schema, system_prompt, user_prompt, prompt_tokens, "primary")
         except Exception as first_error:
-            # 记录第一次失败原因，常见情况包括模型输出非 JSON、字段缺失、网络异常。
-            LOGGER.warning("LLM %s output failed validation for %s: %s", self.client.provider_name, task, first_error)
-            # 第二次尝试：让同一个 provider 修复上一次输出/错误，返回合法 JSON。
+            first_error_message = str(redact_sensitive(first_error))
+            LOGGER.warning("LLM %s output failed validation for %s: %s", self.client.provider_name, task, first_error_message)
             try:
-                # repair_prompt 告诉模型只返回 JSON，并列出目标 schema 字段和原始 payload。
                 repair_prompt = (
                     "Fix the previous response into valid JSON for the requested schema. "
                     "Return JSON only.\n\n"
                     f"Schema fields: {list(schema.model_fields.keys())}\n"
                     f"Original payload: {user_prompt}\n"
-                    f"Previous error: {first_error}"
+                    f"Previous error: {first_error_message}"
                 )
-                raw = self.client.complete_json(task, system_prompt, repair_prompt)
-                return _validate_schema(schema, _parse_json(raw))
+                repair_tokens = _estimate_tokens(system_prompt) + _estimate_tokens(repair_prompt)
+                return self._complete_and_validate(task, schema, system_prompt, repair_prompt, repair_tokens, "repair")
             except Exception as repair_error:
-                # repair 失败说明主 provider 当前不可用或输出不可控，此时进入本地 fallback。
-                LOGGER.warning("LLM %s repair failed for %s: %s", self.client.provider_name, task, repair_error)
-                # issue 字符串会进入 Agent 的 issues，方便在结果和日志中看到使用了兜底。
+                LOGGER.warning("LLM %s repair failed for %s: %s", self.client.provider_name, task, redact_sensitive(repair_error))
                 issue = f"llm_fallback:{self.client.provider_name}:{type(repair_error).__name__}"
-                return fallback(issue)
+                return self._record_fallback(task, prompt_tokens, fallback, issue)
 
-    # 函数作用：
-    # 使用 fallback_client 生成摘要文本。
-    #
-    # 参数说明：
-    # - article：原文章字典。
-    #
-    # 返回值：
-    # - 返回 fallback 摘要字符串。
+    def _complete_and_validate(
+        self,
+        task: str,
+        schema: type[SchemaT],
+        system_prompt: str,
+        user_prompt: str,
+        prompt_tokens: int,
+        phase: str,
+    ) -> SchemaT:
+        started = time.perf_counter()
+        raw = ""
+        with tracer(__name__).start_as_current_span(f"llm.{task}.{phase}") as span:
+            span.set_attribute("llm.provider", self.client.provider_name)
+            span.set_attribute("llm.model", _client_model(self.client))
+            span.set_attribute("llm.task", task)
+            span.set_attribute("llm.phase", phase)
+            span.set_attribute("llm.prompt_tokens", prompt_tokens)
+            try:
+                raw = self.client.complete_json(task, system_prompt, user_prompt)
+                result = _validate_schema(schema, _parse_json(raw))
+                _record_llm_usage(self.client, task, "ok", prompt_tokens, raw, started)
+                span.set_attribute("llm.status", "ok")
+                span.set_attribute("llm.completion_tokens", _estimate_tokens(raw))
+                return result
+            except Exception as exc:
+                _record_llm_usage(self.client, task, "failed", prompt_tokens, raw, started)
+                span.set_attribute("llm.status", "failed")
+                span.record_exception(exc)
+                raise
+
+    def _record_fallback(self, task: str, prompt_tokens: int, fallback: Any, issue: str) -> SchemaT:
+        started = time.perf_counter()
+        with tracer(__name__).start_as_current_span(f"llm.{task}.fallback") as span:
+            span.set_attribute("llm.provider", self.fallback_client.provider_name)
+            span.set_attribute("llm.model", _client_model(self.fallback_client))
+            span.set_attribute("llm.task", task)
+            span.set_attribute("llm.phase", "fallback")
+            output = fallback(issue)
+            completion_text = output.model_dump_json() if isinstance(output, BaseModel) else str(output)
+            completion_tokens = _estimate_tokens(completion_text)
+            METRICS.record_llm_usage(
+                provider=self.fallback_client.provider_name,
+                model=_client_model(self.fallback_client),
+                task=task,
+                status="fallback",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=_estimate_cost_usd(self.fallback_client, prompt_tokens, completion_tokens),
+                duration_seconds=time.perf_counter() - started,
+            )
+            span.set_attribute("llm.status", "fallback")
+            span.set_attribute("llm.completion_tokens", completion_tokens)
+            return output
+
     def _fallback_summary(self, article: JsonDict) -> str:
         # fallback_client 也走 complete_json，再用同一个 schema 校验，保证兜底输出格式一致。
         return _validate_schema(
@@ -708,6 +750,60 @@ def _validate_schema(schema: type[SchemaT], value: JsonDict) -> SchemaT:
 #
 # 返回值：
 # - 返回 dict；如果不是合法 JSON 或不是对象，则返回空字典。
+def _record_llm_usage(
+    client: LLMClient,
+    task: str,
+    status: str,
+    prompt_tokens: int,
+    raw_completion: str,
+    started: float,
+) -> None:
+    completion_tokens = _estimate_tokens(raw_completion)
+    METRICS.record_llm_usage(
+        provider=client.provider_name,
+        model=_client_model(client),
+        task=task,
+        status=status,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=_estimate_cost_usd(client, prompt_tokens, completion_tokens),
+        duration_seconds=time.perf_counter() - started,
+    )
+
+
+def _estimate_tokens(value: str) -> int:
+    text = str(value or "")
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def _estimate_cost_usd(client: LLMClient, prompt_tokens: int, completion_tokens: int) -> float:
+    model = _client_model(client).lower()
+    if client.provider_name == "mock":
+        input_per_million = 0.0
+        output_per_million = 0.0
+    elif client.provider_name == "claude" and "sonnet" in model:
+        input_per_million = 3.0
+        output_per_million = 15.0
+    elif client.provider_name == "openai" and "mini" in model:
+        input_per_million = 0.15
+        output_per_million = 0.60
+    elif client.provider_name == "openai" and "gpt-4.1" in model:
+        input_per_million = 2.0
+        output_per_million = 8.0
+    else:
+        input_per_million = 1.0
+        output_per_million = 3.0
+    return (prompt_tokens * input_per_million + completion_tokens * output_per_million) / 1_000_000
+
+
+def _client_model(client: LLMClient) -> str:
+    settings = getattr(client, "settings", None)
+    model = getattr(settings, "model", "")
+    return str(model or f"{client.provider_name}-model")
+
+
 def _load_prompt_payload(user_prompt: str) -> JsonDict:
     # mock provider 不应因为输入不是 JSON 而中断测试流程，所以这里温和解析。
     try:

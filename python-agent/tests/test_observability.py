@@ -214,6 +214,35 @@ class ObservabilityTest(unittest.TestCase):
         self.assertIn("knowmate_test_llm_tokens_total", rendered)
         self.assertIn("knowmate_test_llm_cost_usd_total", rendered)
 
+    def test_workflow_records_agent_metrics(self) -> None:
+        from app.config import Settings
+        from app.observability import METRICS
+        from app.workflow import ArticleWorkflow
+
+        before = METRICS.render_text().decode("utf-8")
+        workflow = ArticleWorkflow(Settings(mock_mcp=True))
+        workflow.process_articles(
+            {
+                "run_id": "agent-metrics",
+                "mcp_policy": {"mock_transport": True},
+                "articles": [
+                    {
+                        "article_id": "a1",
+                        "url": "https://example.com/a1",
+                        "title": "A1",
+                        "raw_text": "Agent metrics content",
+                    }
+                ],
+            }
+        )
+        after = METRICS.render_text().decode("utf-8")
+
+        self.assertNotEqual(before, after)
+        self.assertIn('agent="filter"', after)
+        self.assertIn('agent="summary"', after)
+        self.assertIn('agent="rewrite"', after)
+        self.assertIn('agent="check"', after)
+
 
 if __name__ == "__main__":
     unittest.main()

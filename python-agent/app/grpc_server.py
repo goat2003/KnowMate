@@ -30,6 +30,7 @@ import hashlib
 import json
 import logging
 from threading import Event, Lock
+import time
 from typing import Any
 
 import grpc
@@ -38,6 +39,7 @@ import agent_pb2
 import agent_pb2_grpc
 from app.config import Settings
 from app.contracts import JsonDict
+from app.observability import METRICS, clear_run_id, set_run_id, tracer
 from app.workflow import ArticleWorkflow
 
 
@@ -174,11 +176,27 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
                 context,
                 f"article count exceeds max_articles_per_request={self.settings.max_articles_per_request}",
             )
-        return self.response_cache.get_or_compute(
-            _request_key("ProcessArticles", request),
-            agent_pb2.ProcessArticlesResponse,
-            lambda: self._process_articles(request),
-        )
+        started = time.perf_counter()
+        status = "OK"
+        set_run_id(request.run_id)
+        with tracer(__name__).start_as_current_span("grpc.ProcessArticles") as span:
+            span.set_attribute("run_id", request.run_id)
+            span.set_attribute("article_count", len(request.articles))
+            try:
+                return self.response_cache.get_or_compute(
+                    _request_key("ProcessArticles", request),
+                    agent_pb2.ProcessArticlesResponse,
+                    lambda: self._process_articles(request),
+                )
+            except Exception as exc:
+                status = "error"
+                span.record_exception(exc)
+                raise
+            finally:
+                duration = time.perf_counter() - started
+                METRICS.record_agent_run("grpc.ProcessArticles", "ok" if status == "OK" else "failed", duration)
+                METRICS.record_grpc_server("ProcessArticles", status, duration)
+                clear_run_id()
 
     def _process_articles(self, request: agent_pb2.ProcessArticlesRequest):
         # 将 protobuf 请求转换成普通 Python dict，降低工作流层对 protobuf 生成类型的依赖。
@@ -252,11 +270,27 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
                 context,
                 f"feedback count exceeds max_feedback_per_request={self.settings.max_feedback_per_request}",
             )
-        return self.response_cache.get_or_compute(
-            _request_key("ProcessFeedback", request),
-            agent_pb2.ProcessFeedbackResponse,
-            lambda: self._process_feedback(request),
-        )
+        started = time.perf_counter()
+        status = "OK"
+        set_run_id(request.run_id)
+        with tracer(__name__).start_as_current_span("grpc.ProcessFeedback") as span:
+            span.set_attribute("run_id", request.run_id)
+            span.set_attribute("feedback_count", len(request.feedback))
+            try:
+                return self.response_cache.get_or_compute(
+                    _request_key("ProcessFeedback", request),
+                    agent_pb2.ProcessFeedbackResponse,
+                    lambda: self._process_feedback(request),
+                )
+            except Exception as exc:
+                status = "error"
+                span.record_exception(exc)
+                raise
+            finally:
+                duration = time.perf_counter() - started
+                METRICS.record_agent_run("grpc.ProcessFeedback", "ok" if status == "OK" else "failed", duration)
+                METRICS.record_grpc_server("ProcessFeedback", status, duration)
+                clear_run_id()
 
     def _process_feedback(self, request: agent_pb2.ProcessFeedbackRequest):
         # 将 protobuf FeedbackInput 列表转换为 Python dict 列表。
