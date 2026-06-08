@@ -3,7 +3,7 @@
 # mock 模式下不访问外网，会返回确定性的模拟 HTML；真实模式下使用 urllib 发起 HTTP 请求。
 #
 # 在项目中的位置：
-# 本文件属于 MCP Server 层，被 Python Agent 的 FetchClient 通过 JSON-RPC 调用。
+# 本文件属于 MCP Server 层，被 Python Agent 的 FetchClient 通过标准 MCP 调用。
 #
 # 主要内容：
 # 1. CONFIG：读取 mock、代理和超时配置。
@@ -132,7 +132,7 @@ def _fetch(url: str) -> dict[str, object]:
             html = response.read().decode("utf-8", errors="replace")
             return {"url": url, "status_code": response.status, "html": html, "raw_text": _clean_text(html), "mock": False}
     except URLError as exc:
-        # 抓取失败转换为 ToolError，由 simple_http_mcp 返回 JSON-RPC error。
+        # 抓取失败转换为 ToolError，由 MCP SDK 返回标准工具错误。
         raise ToolError("failed to fetch webpage", data={"url": url, "detail": str(exc)}) from exc
 
 

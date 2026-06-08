@@ -49,6 +49,7 @@ type Config struct {
 	RSS RSSConfig `yaml:"rss"`
 	// Crawler 控制抓取数量。
 	Crawler CrawlerConfig `yaml:"crawler"`
+	Harness HarnessConfig `yaml:"harness"`
 	// Output 控制 Markdown 输出目录。
 	Output OutputConfig `yaml:"output"`
 	// Profile 保存默认用户画像配置。
@@ -101,12 +102,38 @@ type RSSSource struct {
 	MaxItems int `yaml:"max_items"`
 }
 
+// SourceConfig 表示统一抓取来源；旧 rss.sources 会在 Normalize 中转换为该结构。
+type SourceConfig struct {
+	Name     string `yaml:"name"`
+	Type     string `yaml:"type"`
+	URL      string `yaml:"url"`
+	Enabled  bool   `yaml:"enabled"`
+	MaxItems int    `yaml:"max_items"`
+}
+
 // CrawlerConfig 控制抓取和去重后的文章数量。
 type CrawlerConfig struct {
+	UserAgent                   string `yaml:"user_agent"`
+	RequestTimeoutSeconds       int    `yaml:"request_timeout_seconds"`
+	RetryTimes                  int    `yaml:"retry_times"`
+	RetryBackoffMilliseconds    int    `yaml:"retry_backoff_milliseconds"`
+	MaxRetryDelayMilliseconds   int    `yaml:"max_retry_delay_milliseconds"`
+	PerHostIntervalMilliseconds int    `yaml:"per_host_interval_milliseconds"`
+	MaxResponseBytes            int64  `yaml:"max_response_bytes"`
+	RobotsCacheSeconds          int    `yaml:"robots_cache_seconds"`
 	// SourceMaxItems 是单个源默认最多抓取数量。
 	SourceMaxItems int `yaml:"source_max_items"`
 	// RunMaxArticles 是一次任务最多处理的文章数量。
-	RunMaxArticles int `yaml:"run_max_articles"`
+	RunMaxArticles int            `yaml:"run_max_articles"`
+	Sources        []SourceConfig `yaml:"sources"`
+}
+
+type HarnessConfig struct {
+	MaxConcurrentTasks        int `yaml:"max_concurrent_tasks"`
+	TaskTimeoutSeconds        int `yaml:"task_timeout_seconds"`
+	StepMaxRetries            int `yaml:"step_max_retries"`
+	RetryBackoffMilliseconds  int `yaml:"retry_backoff_milliseconds"`
+	MaxRetryDelayMilliseconds int `yaml:"max_retry_delay_milliseconds"`
 }
 
 // OutputConfig 保存输出目录配置。
@@ -151,6 +178,7 @@ func Load(ctx context.Context) Config {
 	cfg.Server.Address = envOrDefault("GOFRAME_HTTP_ADDR", cfg.Server.Address)
 	cfg.Agent.Address = envOrDefault("AGENT_GRPC_ADDR", cfg.Agent.Address)
 	cfg.MySQL.DSN = envOrDefault("MYSQL_DSN", cfg.MySQL.DSN)
+	cfg.Schema.Path = envOrDefault("SCHEMA_PATH", cfg.Schema.Path)
 	cfg.Output.Dir = envOrDefault("OUTPUT_DIR", cfg.Output.Dir)
 	// AGENT_TIMEOUT_SECONDS 可覆盖 gRPC 超时时间。
 	if value := os.Getenv("AGENT_TIMEOUT_SECONDS"); value != "" {
@@ -164,6 +192,21 @@ func Load(ctx context.Context) Config {
 			cfg.Agent.RetryTimes = parsed
 		}
 	}
+	cfg.Crawler.UserAgent = envOrDefault("CRAWLER_USER_AGENT", cfg.Crawler.UserAgent)
+	overrideInt("CRAWLER_REQUEST_TIMEOUT_SECONDS", &cfg.Crawler.RequestTimeoutSeconds)
+	overrideInt("CRAWLER_RETRY_TIMES", &cfg.Crawler.RetryTimes)
+	overrideInt("CRAWLER_RETRY_BACKOFF_MILLISECONDS", &cfg.Crawler.RetryBackoffMilliseconds)
+	overrideInt("CRAWLER_MAX_RETRY_DELAY_MILLISECONDS", &cfg.Crawler.MaxRetryDelayMilliseconds)
+	overrideInt("CRAWLER_PER_HOST_INTERVAL_MILLISECONDS", &cfg.Crawler.PerHostIntervalMilliseconds)
+	overrideInt64("CRAWLER_MAX_RESPONSE_BYTES", &cfg.Crawler.MaxResponseBytes)
+	overrideInt("CRAWLER_ROBOTS_CACHE_SECONDS", &cfg.Crawler.RobotsCacheSeconds)
+	overrideInt("CRAWLER_SOURCE_MAX_ITEMS", &cfg.Crawler.SourceMaxItems)
+	overrideInt("CRAWLER_RUN_MAX_ARTICLES", &cfg.Crawler.RunMaxArticles)
+	overrideInt("HARNESS_MAX_CONCURRENT_TASKS", &cfg.Harness.MaxConcurrentTasks)
+	overrideInt("HARNESS_TASK_TIMEOUT_SECONDS", &cfg.Harness.TaskTimeoutSeconds)
+	overrideInt("HARNESS_STEP_MAX_RETRIES", &cfg.Harness.StepMaxRetries)
+	overrideInt("HARNESS_RETRY_BACKOFF_MILLISECONDS", &cfg.Harness.RetryBackoffMilliseconds)
+	overrideInt("HARNESS_MAX_RETRY_DELAY_MILLISECONDS", &cfg.Harness.MaxRetryDelayMilliseconds)
 	// Normalize 补齐空值和非法值。
 	return cfg.Normalize()
 }
@@ -193,6 +236,30 @@ func (c Config) Normalize() Config {
 	if c.Agent.RetryTimes <= 0 {
 		c.Agent.RetryTimes = 3
 	}
+	if c.Crawler.UserAgent == "" {
+		c.Crawler.UserAgent = "KnowMateCrawler/1.0"
+	}
+	if c.Crawler.RequestTimeoutSeconds <= 0 {
+		c.Crawler.RequestTimeoutSeconds = 10
+	}
+	if c.Crawler.RetryTimes <= 0 {
+		c.Crawler.RetryTimes = 3
+	}
+	if c.Crawler.RetryBackoffMilliseconds <= 0 {
+		c.Crawler.RetryBackoffMilliseconds = 250
+	}
+	if c.Crawler.MaxRetryDelayMilliseconds <= 0 {
+		c.Crawler.MaxRetryDelayMilliseconds = 30000
+	}
+	if c.Crawler.PerHostIntervalMilliseconds <= 0 {
+		c.Crawler.PerHostIntervalMilliseconds = 500
+	}
+	if c.Crawler.MaxResponseBytes <= 0 {
+		c.Crawler.MaxResponseBytes = 5 * 1024 * 1024
+	}
+	if c.Crawler.RobotsCacheSeconds <= 0 {
+		c.Crawler.RobotsCacheSeconds = 3600
+	}
 	// 单源抓取数量必须为正数。
 	if c.Crawler.SourceMaxItems <= 0 {
 		c.Crawler.SourceMaxItems = 10
@@ -200,6 +267,34 @@ func (c Config) Normalize() Config {
 	// 单次任务文章数量必须为正数。
 	if c.Crawler.RunMaxArticles <= 0 {
 		c.Crawler.RunMaxArticles = 20
+	}
+	if c.Harness.MaxConcurrentTasks <= 0 {
+		c.Harness.MaxConcurrentTasks = 2
+	}
+	if c.Harness.TaskTimeoutSeconds <= 0 {
+		c.Harness.TaskTimeoutSeconds = 120
+	}
+	if c.Harness.StepMaxRetries <= 0 {
+		c.Harness.StepMaxRetries = c.Agent.RetryTimes
+	}
+	if c.Harness.RetryBackoffMilliseconds <= 0 {
+		c.Harness.RetryBackoffMilliseconds = 200
+	}
+	if c.Harness.MaxRetryDelayMilliseconds <= 0 {
+		c.Harness.MaxRetryDelayMilliseconds = 5000
+	}
+	if len(c.Crawler.Sources) == 0 {
+		c.Crawler.Sources = make([]SourceConfig, 0, len(c.RSS.Sources))
+		for _, source := range c.RSS.Sources {
+			c.Crawler.Sources = append(c.Crawler.Sources, SourceConfig{
+				Name: source.Name, Type: sourceTypeForURL(source.URL), URL: source.URL, Enabled: source.Enabled, MaxItems: source.MaxItems,
+			})
+		}
+	}
+	for index := range c.Crawler.Sources {
+		if c.Crawler.Sources[index].Type == "" {
+			c.Crawler.Sources[index].Type = sourceTypeForURL(c.Crawler.Sources[index].URL)
+		}
 	}
 	// 输出目录为空时使用 shared/outputs。
 	if c.Output.Dir == "" {
@@ -230,14 +325,32 @@ func defaults() Config {
 			RetryTimes:     3,
 		},
 		MySQL: MySQLConfig{
-			DSN: "root:rootpass@tcp(127.0.0.1:3306)/knowledge_post_agent?charset=utf8mb4&parseTime=true&loc=Local",
+			DSN: "app:apppass@tcp(127.0.0.1:3306)/knowledge_post_agent?charset=utf8mb4&parseTime=true&loc=Local",
 		},
 		Schema: SchemaConfig{Path: "../shared/sql/init.sql"},
 		RSS: RSSConfig{Sources: []RSSSource{
 			{Name: "mock-knowledge-feed", URL: "mock://sample", Enabled: true, MaxItems: 5},
 		}},
-		Crawler: CrawlerConfig{SourceMaxItems: 10, RunMaxArticles: 20},
-		Output:  OutputConfig{Dir: "../shared/outputs"},
+		Crawler: CrawlerConfig{
+			UserAgent:                   "KnowMateCrawler/1.0",
+			RequestTimeoutSeconds:       10,
+			RetryTimes:                  3,
+			RetryBackoffMilliseconds:    250,
+			MaxRetryDelayMilliseconds:   30000,
+			PerHostIntervalMilliseconds: 500,
+			MaxResponseBytes:            5 * 1024 * 1024,
+			RobotsCacheSeconds:          3600,
+			SourceMaxItems:              10,
+			RunMaxArticles:              20,
+		},
+		Harness: HarnessConfig{
+			MaxConcurrentTasks:        2,
+			TaskTimeoutSeconds:        120,
+			StepMaxRetries:            3,
+			RetryBackoffMilliseconds:  200,
+			MaxRetryDelayMilliseconds: 5000,
+		},
+		Output: OutputConfig{Dir: "../shared/outputs"},
 		Profile: ProfileConfig{
 			UserID:    "default-user",
 			Interests: "AI,knowledge-management,engineering",
@@ -260,4 +373,27 @@ func envOrDefault(key string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func overrideInt(key string, target *int) {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			*target = parsed
+		}
+	}
+}
+
+func overrideInt64(key string, target *int64) {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			*target = parsed
+		}
+	}
+}
+
+func sourceTypeForURL(rawURL string) string {
+	if len(rawURL) >= len("mock://") && rawURL[:len("mock://")] == "mock://" {
+		return "mock"
+	}
+	return "feed"
 }

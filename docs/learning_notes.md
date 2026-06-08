@@ -1,6 +1,6 @@
 # KnowMate 学习笔记草稿
 
-> 这份笔记基于当前仓库代码编写，目标是帮助初学者按“整体 -> 调用链 -> 模块 -> 函数”的顺序理解 KnowMate。  
+> 这份笔记基于当前仓库代码编写，目标是帮助初学者按“整体 -> 调用链 -> 模块 -> 函数”的顺序理解 KnowMate。
 > 重要边界: 当前项目是 MVP。GoFrame HTTP、MySQL、gRPC、Python Workflow、Markdown 输出是真实可运行链路；LLM 默认是 mock；MCP、Milvus、Neo4j 默认是 mock 或内存模拟；Claude provider 只是预留接口。
 
 ## 第一部分: 项目总体介绍
@@ -105,80 +105,80 @@ KnowMate/
 
 全文件速览:
 
-| 文件 | 作用 |
-|---|---|
-| `.env.example` | 环境变量示例，包含 GoFrame、Python Agent、MCP endpoint 配置。 |
-| `README.md` | 项目总入口文档，说明 MVP 边界、启动、gRPC、LLM、MCP、测试。 |
-| `docker-compose.yml` | 启动 MySQL，并挂载 `shared/sql/init.sql` 初始化表。 |
-| `goframe-backend/main.go` | GoFrame 后端入口。 |
-| `goframe-backend/go.mod` / `go.sum` | Go 模块依赖。 |
-| `goframe-backend/manifest/config/config.yaml` | GoFrame 默认配置。 |
-| `goframe-backend/internal/agentpb/agent.pb.go` | proto 生成的 Go message 类型。 |
-| `goframe-backend/internal/agentpb/agent_grpc.pb.go` | proto 生成的 Go gRPC client/server 接口。 |
-| `goframe-backend/internal/agentpb/proto_contract_test.go` | Go 侧 proto 契约测试。 |
-| `goframe-backend/internal/config/config.go` | 后端配置读取、环境变量覆盖、默认值归一化。 |
-| `goframe-backend/internal/crawler/rss.go` | RSS 抓取、mock RSS、文章去重。 |
-| `goframe-backend/internal/grpcclient/client.go` | 连接 Python Agent 的 gRPC client。 |
-| `goframe-backend/internal/handler/handler.go` | HTTP handler/controller。 |
-| `goframe-backend/internal/logic/harness/harness.go` | 文章处理和反馈处理的主编排。 |
-| `goframe-backend/internal/model/model.go` | Go 侧业务模型。 |
-| `goframe-backend/internal/store/mysql.go` | MySQL 读写层。 |
-| `mcp-servers/README.md` | MCP mock servers 总说明。 |
-| `mcp-servers/common/simple_http_mcp.py` | 通用 HTTP JSON-RPC MCP server 框架。 |
-| `mcp-servers/embedding-mcp/README.md` / `server.py` | embedding mock server 文档和实现。 |
-| `mcp-servers/fetch-mcp/README.md` / `server.py` | fetch mock/真实网页抓取 server 文档和实现。 |
-| `mcp-servers/milvus-mcp/README.md` / `server.py` | Milvus mock vector memory server 文档和实现。 |
-| `mcp-servers/neo4j-mcp/README.md` / `server.py` | Neo4j mock user graph server 文档和实现。 |
-| `proto/agent.proto` | proto 兼容副本，用于同步检查。 |
-| `python-agent/server.py` | Python Agent 主入口。 |
-| `python-agent/config.yaml` | Python Agent 默认配置。 |
-| `python-agent/pyproject.toml` / `requirements.txt` | Python 依赖定义。 |
-| `python-agent/agent_pb2.py` | proto 生成的 Python message 类型。 |
-| `python-agent/agent_pb2_grpc.py` | proto 生成的 Python gRPC stub/servicer 基类。 |
-| `python-agent/examples/client_example.py` | Python gRPC 调用示例。 |
-| `python-agent/tools/llm_tool.py` | 兼容旧路径的 re-export。 |
-| `python-agent/app/__init__.py` | Python package 标记文件。 |
-| `python-agent/app/main.py` | `python -m app.main` 入口。 |
-| `python-agent/app/config.py` | Python 配置加载。 |
-| `python-agent/app/contracts.py` | 共享 dict 类型、run_id、policy、article 标准化。 |
-| `python-agent/app/grpc_server.py` | Python gRPC Server 实现。 |
-| `python-agent/app/skill_loader.py` | 读取 skills markdown。 |
-| `python-agent/app/agents/base.py` | Agent 基类。 |
-| `python-agent/app/agents/__init__.py` | Agent 导出集合。 |
-| `python-agent/app/agents/filter_agent.py` | FilterAgent。 |
-| `python-agent/app/agents/summary_agent.py` | SummaryAgent。 |
-| `python-agent/app/agents/rewrite_agent.py` | RewriteAgent。 |
-| `python-agent/app/agents/check_agent.py` | CheckAgent。 |
-| `python-agent/app/agents/feedback_agent.py` | FeedbackAgent。 |
-| `python-agent/app/agents/memory_agent.py` | MemoryAgent。 |
-| `python-agent/app/llm/__init__.py` / `mock.py` | 旧版 mock LLM 类，目前主流程使用 `app/tools/llm_tool.py`。 |
-| `python-agent/app/mcp/__init__.py` | MCP Client 导出集合。 |
-| `python-agent/app/mcp/base_client.py` | MCP transport、client 基类、日志生成和降级。 |
-| `python-agent/app/mcp/policy.py` | MCP 权限矩阵。 |
-| `python-agent/app/mcp/embedding_client.py` | Embedding MCP Client。 |
-| `python-agent/app/mcp/fetch_client.py` | Fetch MCP Client。 |
-| `python-agent/app/mcp/milvus_client.py` | Milvus MCP Client。 |
-| `python-agent/app/mcp/neo4j_client.py` | Neo4j MCP Client。 |
-| `python-agent/app/tools/__init__.py` | LLMTool 相关类导出。 |
-| `python-agent/app/tools/llm_tool.py` | LLM provider、Pydantic schema、JSON repair、fallback。 |
-| `python-agent/app/workflow/__init__.py` | Workflow 导出。 |
-| `python-agent/app/workflow/graph.py` | ArticleWorkflow 和 LangGraph/sequential 编排。 |
-| `python-agent/app/workflow/state.py` | AgentState 类型。 |
-| `python-agent/app/skills/*.md` | Agent skill/prompt/权限/失败处理说明，其中短文件如 `summary.md` 是简版说明，`summary_skill.md` 是主流程读取的详细 skill。 |
-| `python-agent/tests/test_workflow.py` | Workflow 和 gRPC service 测试。 |
-| `python-agent/tests/test_llm_tool.py` | LLMTool 测试。 |
-| `python-agent/tests/test_mcp_policy.py` | MCP 权限和日志测试。 |
-| `python-agent/tests/test_skills.py` | Skill 文件完整性测试。 |
-| `scripts/check_proto_contract.ps1` | proto 同步和契约检查。 |
-| `scripts/integration_test.ps1` | Go test + Python unit test + smoke。 |
-| `scripts/smoke_e2e.ps1` | 完整 E2E smoke。 |
-| `shared/proto/agent.proto` | gRPC 主契约。 |
-| `shared/sql/init.sql` | MySQL schema。 |
-| `shared/config/README.md` | 共享配置说明。 |
-| `shared/config/e2e.config.yaml` | E2E 配置示例。 |
-| `shared/config/rss_sources.example.yaml` | RSS source 配置示例。 |
-| `shared/config/user_profile_snapshot.example.json` | 用户画像示例。 |
-| `shared/outputs/.gitkeep` | 输出目录占位。 |
+| 文件                                                        | 作用                                                                                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `.env.example`                                            | 环境变量示例，包含 GoFrame、Python Agent、MCP endpoint 配置。                                                                 |
+| `README.md`                                               | 项目总入口文档，说明 MVP 边界、启动、gRPC、LLM、MCP、测试。                                                                   |
+| `docker-compose.yml`                                      | 启动 MySQL，并挂载 `shared/sql/init.sql` 初始化表。                                                                         |
+| `goframe-backend/main.go`                                 | GoFrame 后端入口。                                                                                                            |
+| `goframe-backend/go.mod` / `go.sum`                     | Go 模块依赖。                                                                                                                 |
+| `goframe-backend/manifest/config/config.yaml`             | GoFrame 默认配置。                                                                                                            |
+| `goframe-backend/internal/agentpb/agent.pb.go`            | proto 生成的 Go message 类型。                                                                                                |
+| `goframe-backend/internal/agentpb/agent_grpc.pb.go`       | proto 生成的 Go gRPC client/server 接口。                                                                                     |
+| `goframe-backend/internal/agentpb/proto_contract_test.go` | Go 侧 proto 契约测试。                                                                                                        |
+| `goframe-backend/internal/config/config.go`               | 后端配置读取、环境变量覆盖、默认值归一化。                                                                                    |
+| `goframe-backend/internal/crawler/rss.go`                 | RSS 抓取、mock RSS、文章去重。                                                                                                |
+| `goframe-backend/internal/grpcclient/client.go`           | 连接 Python Agent 的 gRPC client。                                                                                            |
+| `goframe-backend/internal/handler/handler.go`             | HTTP handler/controller。                                                                                                     |
+| `goframe-backend/internal/logic/harness/harness.go`       | 文章处理和反馈处理的主编排。                                                                                                  |
+| `goframe-backend/internal/model/model.go`                 | Go 侧业务模型。                                                                                                               |
+| `goframe-backend/internal/store/mysql.go`                 | MySQL 读写层。                                                                                                                |
+| `mcp-servers/README.md`                                   | MCP mock servers 总说明。                                                                                                     |
+| `mcp-servers/common/simple_http_mcp.py`                   | 通用 HTTP JSON-RPC MCP server 框架。                                                                                          |
+| `mcp-servers/embedding-mcp/README.md` / `server.py`     | embedding mock server 文档和实现。                                                                                            |
+| `mcp-servers/fetch-mcp/README.md` / `server.py`         | fetch mock/真实网页抓取 server 文档和实现。                                                                                   |
+| `mcp-servers/milvus-mcp/README.md` / `server.py`        | Milvus mock vector memory server 文档和实现。                                                                                 |
+| `mcp-servers/neo4j-mcp/README.md` / `server.py`         | Neo4j mock user graph server 文档和实现。                                                                                     |
+| `proto/agent.proto`                                       | proto 兼容副本，用于同步检查。                                                                                                |
+| `python-agent/server.py`                                  | Python Agent 主入口。                                                                                                         |
+| `python-agent/config.yaml`                                | Python Agent 默认配置。                                                                                                       |
+| `python-agent/pyproject.toml` / `requirements.txt`      | Python 依赖定义。                                                                                                             |
+| `python-agent/agent_pb2.py`                               | proto 生成的 Python message 类型。                                                                                            |
+| `python-agent/agent_pb2_grpc.py`                          | proto 生成的 Python gRPC stub/servicer 基类。                                                                                 |
+| `python-agent/examples/client_example.py`                 | Python gRPC 调用示例。                                                                                                        |
+| `python-agent/tools/llm_tool.py`                          | 兼容旧路径的 re-export。                                                                                                      |
+| `python-agent/app/__init__.py`                            | Python package 标记文件。                                                                                                     |
+| `python-agent/app/main.py`                                | `python -m app.main` 入口。                                                                                                 |
+| `python-agent/app/config.py`                              | Python 配置加载。                                                                                                             |
+| `python-agent/app/contracts.py`                           | 共享 dict 类型、run_id、policy、article 标准化。                                                                              |
+| `python-agent/app/grpc_server.py`                         | Python gRPC Server 实现。                                                                                                     |
+| `python-agent/app/skill_loader.py`                        | 读取 skills markdown。                                                                                                        |
+| `python-agent/app/agents/base.py`                         | Agent 基类。                                                                                                                  |
+| `python-agent/app/agents/__init__.py`                     | Agent 导出集合。                                                                                                              |
+| `python-agent/app/agents/filter_agent.py`                 | FilterAgent。                                                                                                                 |
+| `python-agent/app/agents/summary_agent.py`                | SummaryAgent。                                                                                                                |
+| `python-agent/app/agents/rewrite_agent.py`                | RewriteAgent。                                                                                                                |
+| `python-agent/app/agents/check_agent.py`                  | CheckAgent。                                                                                                                  |
+| `python-agent/app/agents/feedback_agent.py`               | FeedbackAgent。                                                                                                               |
+| `python-agent/app/agents/memory_agent.py`                 | MemoryAgent。                                                                                                                 |
+| `python-agent/app/llm/__init__.py` / `mock.py`          | 旧版 mock LLM 类，目前主流程使用 `app/tools/llm_tool.py`。                                                                  |
+| `python-agent/app/mcp/__init__.py`                        | MCP Client 导出集合。                                                                                                         |
+| `python-agent/app/mcp/base_client.py`                     | MCP transport、client 基类、日志生成和降级。                                                                                  |
+| `python-agent/app/mcp/policy.py`                          | MCP 权限矩阵。                                                                                                                |
+| `python-agent/app/mcp/embedding_client.py`                | Embedding MCP Client。                                                                                                        |
+| `python-agent/app/mcp/fetch_client.py`                    | Fetch MCP Client。                                                                                                            |
+| `python-agent/app/mcp/milvus_client.py`                   | Milvus MCP Client。                                                                                                           |
+| `python-agent/app/mcp/neo4j_client.py`                    | Neo4j MCP Client。                                                                                                            |
+| `python-agent/app/tools/__init__.py`                      | LLMTool 相关类导出。                                                                                                          |
+| `python-agent/app/tools/llm_tool.py`                      | LLM provider、Pydantic schema、JSON repair、fallback。                                                                        |
+| `python-agent/app/workflow/__init__.py`                   | Workflow 导出。                                                                                                               |
+| `python-agent/app/workflow/graph.py`                      | ArticleWorkflow 和 LangGraph/sequential 编排。                                                                                |
+| `python-agent/app/workflow/state.py`                      | AgentState 类型。                                                                                                             |
+| `python-agent/app/skills/*.md`                            | Agent skill/prompt/权限/失败处理说明，其中短文件如 `summary.md` 是简版说明，`summary_skill.md` 是主流程读取的详细 skill。 |
+| `python-agent/tests/test_workflow.py`                     | Workflow 和 gRPC service 测试。                                                                                               |
+| `python-agent/tests/test_llm_tool.py`                     | LLMTool 测试。                                                                                                                |
+| `python-agent/tests/test_mcp_policy.py`                   | MCP 权限和日志测试。                                                                                                          |
+| `python-agent/tests/test_skills.py`                       | Skill 文件完整性测试。                                                                                                        |
+| `scripts/check_proto_contract.ps1`                        | proto 同步和契约检查。                                                                                                        |
+| `scripts/integration_test.ps1`                            | Go test + Python unit test + smoke。                                                                                          |
+| `scripts/smoke_e2e.ps1`                                   | 完整 E2E smoke。                                                                                                              |
+| `shared/proto/agent.proto`                                | gRPC 主契约。                                                                                                                 |
+| `shared/sql/init.sql`                                     | MySQL schema。                                                                                                                |
+| `shared/config/README.md`                                 | 共享配置说明。                                                                                                                |
+| `shared/config/e2e.config.yaml`                           | E2E 配置示例。                                                                                                                |
+| `shared/config/rss_sources.example.yaml`                  | RSS source 配置示例。                                                                                                         |
+| `shared/config/user_profile_snapshot.example.json`        | 用户画像示例。                                                                                                                |
+| `shared/outputs/.gitkeep`                                 | 输出目录占位。                                                                                                                |
 
 ### `goframe-backend/`
 
@@ -523,7 +523,7 @@ Response:
 - `enabled_agents`: 当前启用的 Agent 名称，来自 `ArticleWorkflow.enabled_agents()`。
 - `mock_mode`: 只要 LLM provider 是 mock 或 MCP 是 mock，就返回 true。
 
-Python 实现: `python-agent/app/grpc_server.py` 的 `HealthCheck`。  
+Python 实现: `python-agent/app/grpc_server.py` 的 `HealthCheck`。
 Go 调用: `goframe-backend/internal/grpcclient/client.go` 的 `HealthCheck`。
 
 ### `ProcessArticles`
@@ -775,14 +775,14 @@ ProcessFeedbackResponse
 
 ### Agent 读写 state
 
-| Agent | 读取 | 写入 |
-|---|---|---|
-| FilterAgent | `run_id`、`articles`、`user_profile_snapshot`、`mcp_policy` | `article_results`，每个 result 带 `keep`、`score`、`issues`、`mcp_call_logs` |
-| SummaryAgent | `user_profile_snapshot`、`article_results[*].article`、`keep` | `article_results[*].summary`、可能追加 `issues` |
-| RewriteAgent | `article_results[*].article`、`summary`、`keep` | `article_results[*].post_text`、可能追加 `issues` |
-| CheckAgent | `article_results[*]` | `article_results[*].check_pass`、规范化 `issues` |
-| FeedbackAgent | `feedback` | `sentiment`、`extracted_feedback`、可能写 `feedback_issues` |
-| MemoryAgent | `run_id`、`user_profile_snapshot`、`sentiment`、`extracted_feedback`、`mcp_policy` | `updated_profile_snapshot`、`mcp_call_logs` |
+| Agent         | 读取                                                                                         | 写入                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| FilterAgent   | `run_id`、`articles`、`user_profile_snapshot`、`mcp_policy`                          | `article_results`，每个 result 带 `keep`、`score`、`issues`、`mcp_call_logs` |
+| SummaryAgent  | `user_profile_snapshot`、`article_results[*].article`、`keep`                          | `article_results[*].summary`、可能追加 `issues`                                    |
+| RewriteAgent  | `article_results[*].article`、`summary`、`keep`                                        | `article_results[*].post_text`、可能追加 `issues`                                  |
+| CheckAgent    | `article_results[*]`                                                                       | `article_results[*].check_pass`、规范化 `issues`                                   |
+| FeedbackAgent | `feedback`                                                                                 | `sentiment`、`extracted_feedback`、可能写 `feedback_issues`                      |
+| MemoryAgent   | `run_id`、`user_profile_snapshot`、`sentiment`、`extracted_feedback`、`mcp_policy` | `updated_profile_snapshot`、`mcp_call_logs`                                        |
 
 ### 最终结果如何转成 gRPC Response
 
@@ -826,10 +826,10 @@ ProcessFeedbackResponse
 
 ### 1. FilterAgent
 
-【Agent 作用】  
+【Agent 作用】
 FilterAgent 负责判断文章是否值得继续处理。当前 MVP 主要用本地规则打分，并可叠加 mock Neo4j 画像上下文、mock embedding、mock Milvus 相似记忆信号。
 
-【输入】  
+【输入】
 读取 `state["run_id"]`、`state["articles"]`、`state["user_profile_snapshot"]`、`state["mcp_policy"]`。如果启用 MCP，还会通过 `EmbeddingClient`、`MilvusClient`、`Neo4jClient`、可选 `FetchClient` 获取辅助信号。
 
 【处理流程】
@@ -843,59 +843,59 @@ FilterAgent 负责判断文章是否值得继续处理。当前 MVP 主要用本
 7. `score >= 0.5` 且有标题则 `keep=true`。
 8. 写入 `state["article_results"]`。
 
-【输出】  
+【输出】
 `state["article_results"]`。每个 result 包括 `article`、`article_id`、`keep`、`score`、`summary`、`post_text`、`check_pass`、`issues`、`mcp_call_logs`、`filter_reasons`。
 
-【调用的工具】  
+【调用的工具】
 不调用 LLM。会调用 MCP Client。会读取 Skill 文本但当前代码没有把 skill_text 用进打分逻辑。不会更新用户画像。
 
 【核心函数逐行讲解: `filter_agent.py` 的 `run`, 第 28-81 行】
 
-| 行 | 解释 |
-|---|---|
-| 28 | `def run(self, state: JsonDict) -> JsonDict:` 定义实例方法。`self` 是当前 Agent 对象，`state` 是工作流共享字典，`-> JsonDict` 是 Python 类型标注。 |
-| 29 | `run_id = str(state.get("run_id", ""))` 从 state 取运行 ID。`dict.get(key, default)` 表示 key 不存在时用默认值。`str(...)` 保证后续日志字段是字符串。 |
-| 30 | `profile = state.get("user_profile_snapshot", {})` 取用户画像。默认空 dict，避免没有画像时报错。 |
-| 31 | `policy = state.get("mcp_policy", {})` 取 MCP 开关，比如是否启用 embedding、Milvus、Neo4j。 |
-| 32 | `article_results = []` 创建空列表，用来收集每篇文章的处理结果。 |
-| 33 | `for article in state.get("articles", []):` 遍历输入文章。`for ... in ...` 是 Python 循环语法；默认空列表可避免无文章时报错。 |
-| 34 | `logs: list[JsonDict] = []` 为当前文章创建 MCP 日志列表。`list[JsonDict]` 是类型提示。 |
-| 35 | `if policy.get("enable_fetch") ...:` 判断是否允许 fetch、文章是否没有正文、是否有 URL、是否注入了 fetch client。多个条件用 `and`，全部为真才进入。 |
-| 36 | `fetched = self.fetch_client.fetch_url(...)` 调用 FetchClient。当前权限矩阵中 filter 不允许 `fetch_webpage`，所以如果真的走到这里，会得到 denied 日志。 |
-| 37 | `logs.append(fetched.log)` 把 MCP 调用日志加入当前文章日志。`append` 是列表追加方法。 |
-| 38 | `article["raw_text"] = ...` 把 fetch 结果里的 `raw_text` 写回 article。即使为空也转成字符串。 |
-| 40 | `score, reasons = self._score_article(article, profile)` 调用本地打分函数。左侧是元组解包，把返回的两个值分别赋给 `score` 和 `reasons`。 |
-| 41 | `if policy.get("enable_neo4j") and self.neo4j_client:` 如果开了 Neo4j 且 client 存在，进入图画像查询。 |
-| 42 | `context = self.neo4j_client.get_profile_context(...)` 调用 `query_user_interest_graph`，传用户 ID、画像、agent_name、run_id。 |
-| 43 | `logs.append(context.log)` 保存 Neo4j 调用日志。 |
-| 44 | `if context.result.get("topics"):` 如果返回 topics，说明有图画像上下文。 |
-| 45 | `score = min(score + 0.05, 1.0)` 分数加 0.05，但用 `min` 限制最高 1.0。 |
-| 46 | `reasons.append("mock-profile-context")` 记录加分原因。这里明确是 mock 信号。 |
-| 48 | `embedding: list[float] = []` 初始化 embedding 为空列表。类型提示表示列表元素是 float。 |
-| 49 | `if policy.get("enable_embedding") and self.embedding_client:` 如果允许 embedding 且 client 存在，开始向量化。 |
-| 50-54 | `embedded = self.embedding_client.embed_text(...)` 多行函数调用。把标题和正文拼成一个字符串，并传 `agent_name`、`run_id` 用于权限和日志。 |
-| 55 | `logs.append(embedded.log)` 保存 embedding 调用日志。 |
-| 56 | `embedding = list(embedded.result.get("embedding", []))` 从结果中取 embedding；`list(...)` 确保是列表。失败时 result 是 error，没有 embedding，则得到空列表。 |
-| 58 | `if policy.get("enable_milvus") and embedding and self.milvus_client:` 只有允许 Milvus、embedding 非空、client 存在时才查相似记忆。 |
-| 59 | `related = self.milvus_client.search_similar_memory(...)` 调用 mock/真实 transport 的 `search_similar_memory`。 |
-| 60 | `logs.append(related.log)` 保存 Milvus 调用日志。 |
-| 61 | `if related.result.get("matches"):` 如果有相似记忆命中。 |
-| 62 | `score = min(score + 0.05, 1.0)` 再加 0.05，同样限制最高 1.0。 |
-| 63 | `reasons.append("mock-related-articles")` 记录相似记忆加分原因。这里也是 mock 信号。 |
-| 65 | `keep = score >= 0.5 and bool(article.get("title"))` 得出是否保留。`>=` 是比较运算，`bool(...)` 把标题存在性转布尔值。 |
-| 66 | `article_results.append(` 开始把本篇文章结果追加到列表。 |
-| 67-78 | 这是一个字典 literal，保存文章、ID、保留结果、分数、摘要占位、推文占位、检查状态、问题列表、MCP 日志和筛选原因。 |
-| 71 | `round(score, 4)` 把分数保留 4 位小数。 |
-| 75 | `"issues": [] if keep else ["filtered_out"]` 是 Python 三元表达式。保留则无问题，不保留则标记 `filtered_out`。 |
-| 80 | `state["article_results"] = article_results` 把所有文章结果写回工作流 state。 |
-| 81 | `return state` 返回更新后的 state，让下一个 Agent 继续处理。 |
+| 行    | 解释                                                                                                                                                              |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 28    | `def run(self, state: JsonDict) -> JsonDict:` 定义实例方法。`self` 是当前 Agent 对象，`state` 是工作流共享字典，`-> JsonDict` 是 Python 类型标注。        |
+| 29    | `run_id = str(state.get("run_id", ""))` 从 state 取运行 ID。`dict.get(key, default)` 表示 key 不存在时用默认值。`str(...)` 保证后续日志字段是字符串。       |
+| 30    | `profile = state.get("user_profile_snapshot", {})` 取用户画像。默认空 dict，避免没有画像时报错。                                                                |
+| 31    | `policy = state.get("mcp_policy", {})` 取 MCP 开关，比如是否启用 embedding、Milvus、Neo4j。                                                                     |
+| 32    | `article_results = []` 创建空列表，用来收集每篇文章的处理结果。                                                                                                 |
+| 33    | `for article in state.get("articles", []):` 遍历输入文章。`for ... in ...` 是 Python 循环语法；默认空列表可避免无文章时报错。                                 |
+| 34    | `logs: list[JsonDict] = []` 为当前文章创建 MCP 日志列表。`list[JsonDict]` 是类型提示。                                                                        |
+| 35    | `if policy.get("enable_fetch") ...:` 判断是否允许 fetch、文章是否没有正文、是否有 URL、是否注入了 fetch client。多个条件用 `and`，全部为真才进入。            |
+| 36    | `fetched = self.fetch_client.fetch_url(...)` 调用 FetchClient。当前权限矩阵中 filter 不允许 `fetch_webpage`，所以如果真的走到这里，会得到 denied 日志。       |
+| 37    | `logs.append(fetched.log)` 把 MCP 调用日志加入当前文章日志。`append` 是列表追加方法。                                                                         |
+| 38    | `article["raw_text"] = ...` 把 fetch 结果里的 `raw_text` 写回 article。即使为空也转成字符串。                                                                 |
+| 40    | `score, reasons = self._score_article(article, profile)` 调用本地打分函数。左侧是元组解包，把返回的两个值分别赋给 `score` 和 `reasons`。                    |
+| 41    | `if policy.get("enable_neo4j") and self.neo4j_client:` 如果开了 Neo4j 且 client 存在，进入图画像查询。                                                          |
+| 42    | `context = self.neo4j_client.get_profile_context(...)` 调用 `query_user_interest_graph`，传用户 ID、画像、agent_name、run_id。                                |
+| 43    | `logs.append(context.log)` 保存 Neo4j 调用日志。                                                                                                                |
+| 44    | `if context.result.get("topics"):` 如果返回 topics，说明有图画像上下文。                                                                                        |
+| 45    | `score = min(score + 0.05, 1.0)` 分数加 0.05，但用 `min` 限制最高 1.0。                                                                                       |
+| 46    | `reasons.append("mock-profile-context")` 记录加分原因。这里明确是 mock 信号。                                                                                   |
+| 48    | `embedding: list[float] = []` 初始化 embedding 为空列表。类型提示表示列表元素是 float。                                                                         |
+| 49    | `if policy.get("enable_embedding") and self.embedding_client:` 如果允许 embedding 且 client 存在，开始向量化。                                                  |
+| 50-54 | `embedded = self.embedding_client.embed_text(...)` 多行函数调用。把标题和正文拼成一个字符串，并传 `agent_name`、`run_id` 用于权限和日志。                   |
+| 55    | `logs.append(embedded.log)` 保存 embedding 调用日志。                                                                                                           |
+| 56    | `embedding = list(embedded.result.get("embedding", []))` 从结果中取 embedding；`list(...)` 确保是列表。失败时 result 是 error，没有 embedding，则得到空列表。 |
+| 58    | `if policy.get("enable_milvus") and embedding and self.milvus_client:` 只有允许 Milvus、embedding 非空、client 存在时才查相似记忆。                             |
+| 59    | `related = self.milvus_client.search_similar_memory(...)` 调用 mock/真实 transport 的 `search_similar_memory`。                                               |
+| 60    | `logs.append(related.log)` 保存 Milvus 调用日志。                                                                                                               |
+| 61    | `if related.result.get("matches"):` 如果有相似记忆命中。                                                                                                        |
+| 62    | `score = min(score + 0.05, 1.0)` 再加 0.05，同样限制最高 1.0。                                                                                                  |
+| 63    | `reasons.append("mock-related-articles")` 记录相似记忆加分原因。这里也是 mock 信号。                                                                            |
+| 65    | `keep = score >= 0.5 and bool(article.get("title"))` 得出是否保留。`>=` 是比较运算，`bool(...)` 把标题存在性转布尔值。                                      |
+| 66    | `article_results.append(` 开始把本篇文章结果追加到列表。                                                                                                        |
+| 67-78 | 这是一个字典 literal，保存文章、ID、保留结果、分数、摘要占位、推文占位、检查状态、问题列表、MCP 日志和筛选原因。                                                  |
+| 71    | `round(score, 4)` 把分数保留 4 位小数。                                                                                                                         |
+| 75    | `"issues": [] if keep else ["filtered_out"]` 是 Python 三元表达式。保留则无问题，不保留则标记 `filtered_out`。                                                |
+| 80    | `state["article_results"] = article_results` 把所有文章结果写回工作流 state。                                                                                   |
+| 81    | `return state` 返回更新后的 state，让下一个 Agent 继续处理。                                                                                                    |
 
 ### 2. SummaryAgent
 
-【Agent 作用】  
+【Agent 作用】
 SummaryAgent 负责为保留下来的文章生成中文摘要。
 
-【输入】  
+【输入】
 读取 `state["user_profile_snapshot"]`、`state["article_results"]`、每个 result 的 `article` 和 `keep`。读取 `summary_skill.md`，传给 LLMTool。
 
 【处理流程】
@@ -907,33 +907,33 @@ SummaryAgent 负责为保留下来的文章生成中文摘要。
 5. 写入 `summary`。
 6. 如果 LLM 输出有 issues，追加到 result 的 issues。
 
-【输出】  
+【输出】
 写入 `result["summary"]`，可能追加 `result["issues"]`。
 
-【调用的工具】  
+【调用的工具】
 调用 LLMTool。当前代码不调用 MCP。读取 Skill。
 
 【核心函数逐行讲解: `summary_agent.py` 的 `run`, 第 16-25 行】
 
-| 行 | 解释 |
-|---|---|
-| 16 | 定义 `run` 方法，输入输出都是 `JsonDict`。 |
-| 17 | `profile = dict(state.get("user_profile_snapshot", {}))` 取画像并复制成新 dict。`dict(...)` 可以避免直接改原对象。 |
-| 18 | `for result in state.get("article_results", []):` 遍历 FilterAgent 生成的结果。 |
-| 19 | `if not result.get("keep"):` 如果文章不保留。`not` 是布尔取反。 |
-| 20 | `continue` 跳过本次循环，进入下一篇文章。 |
-| 21 | `output = self.llm_tool.summarize(...)` 调 LLMTool。参数包括文章、画像和 summary skill 文本。 |
-| 22 | `result["summary"] = output.summary` 把 Pydantic 输出对象里的 `summary` 写回 result。 |
-| 23 | `if output.issues:` 如果 LLMTool 返回问题，例如 fallback。空列表在 Python 中为 false。 |
+| 行 | 解释                                                                                                                                             |
+| -- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 16 | 定义 `run` 方法，输入输出都是 `JsonDict`。                                                                                                   |
+| 17 | `profile = dict(state.get("user_profile_snapshot", {}))` 取画像并复制成新 dict。`dict(...)` 可以避免直接改原对象。                           |
+| 18 | `for result in state.get("article_results", []):` 遍历 FilterAgent 生成的结果。                                                                |
+| 19 | `if not result.get("keep"):` 如果文章不保留。`not` 是布尔取反。                                                                              |
+| 20 | `continue` 跳过本次循环，进入下一篇文章。                                                                                                      |
+| 21 | `output = self.llm_tool.summarize(...)` 调 LLMTool。参数包括文章、画像和 summary skill 文本。                                                  |
+| 22 | `result["summary"] = output.summary` 把 Pydantic 输出对象里的 `summary` 写回 result。                                                        |
+| 23 | `if output.issues:` 如果 LLMTool 返回问题，例如 fallback。空列表在 Python 中为 false。                                                         |
 | 24 | `result.setdefault("issues", []).extend(output.issues)` 如果没有 `issues` 就创建空列表，然后追加 LLM 问题。`extend` 会把列表元素逐个追加。 |
-| 25 | `return state` 返回更新后的 state。 |
+| 25 | `return state` 返回更新后的 state。                                                                                                            |
 
 ### 3. RewriteAgent
 
-【Agent 作用】  
+【Agent 作用】
 RewriteAgent 把摘要改写成适合发布的 Markdown 知识帖。
 
-【输入】  
+【输入】
 读取每个 result 的 `article`、`summary`、`keep`。读取 `rewrite_post_skill.md`，传给 LLMTool。
 
 【处理流程】
@@ -944,32 +944,32 @@ RewriteAgent 把摘要改写成适合发布的 Markdown 知识帖。
 4. 写入 `post_text`。
 5. 追加 issues。
 
-【输出】  
+【输出】
 写入 `result["post_text"]`，可能追加 `result["issues"]`。
 
-【调用的工具】  
+【调用的工具】
 调用 LLMTool。当前代码不调用 MCP。读取 Skill。不更新用户画像。
 
 【核心函数逐行讲解: `rewrite_agent.py` 的 `run`, 第 16-24 行】
 
-| 行 | 解释 |
-|---|---|
-| 16 | 定义 `run` 方法，接收工作流 state。 |
-| 17 | 遍历 `article_results`。 |
-| 18 | 如果 `keep` 不是 true，说明 Filter 不推荐继续处理。 |
-| 19 | `continue` 跳过该文章。 |
+| 行 | 解释                                                                                                                 |
+| -- | -------------------------------------------------------------------------------------------------------------------- |
+| 16 | 定义 `run` 方法，接收工作流 state。                                                                                |
+| 17 | 遍历 `article_results`。                                                                                           |
+| 18 | 如果 `keep` 不是 true，说明 Filter 不推荐继续处理。                                                                |
+| 19 | `continue` 跳过该文章。                                                                                            |
 | 20 | 调用 `llm_tool.rewrite_post`。`str(result.get("summary", ""))` 确保 summary 是字符串，即使缺失也不会报类型错误。 |
-| 21 | 把返回对象的 `post_text` 写入 result。 |
-| 22 | 如果 LLMTool 返回 issues。 |
-| 23 | 用 `setdefault(...).extend(...)` 把问题追加到现有 issues。 |
-| 24 | 返回 state。 |
+| 21 | 把返回对象的 `post_text` 写入 result。                                                                             |
+| 22 | 如果 LLMTool 返回 issues。                                                                                           |
+| 23 | 用 `setdefault(...).extend(...)` 把问题追加到现有 issues。                                                         |
+| 24 | 返回 state。                                                                                                         |
 
 ### 4. CheckAgent
 
-【Agent 作用】  
+【Agent 作用】
 CheckAgent 负责检查最终结果是否满足最低发布要求。当前 MVP 只做本地字段检查: 是否保留、是否有 summary、是否有 post_text、是否有 URL。
 
-【输入】  
+【输入】
 读取 `article_results`、每个 result 的 `keep`、`summary`、`post_text`、`issues` 和 `article.url`。
 
 【处理流程】
@@ -982,40 +982,40 @@ CheckAgent 负责检查最终结果是否满足最低发布要求。当前 MVP �
 6. 如果缺 URL，追加 `missing_url`。
 7. 没有任何 issues 时 `check_pass=true`。
 
-【输出】  
+【输出】
 写入 `result["issues"]` 和 `result["check_pass"]`。
 
-【调用的工具】  
+【调用的工具】
 当前代码不调用 LLM、不调用 MCP、不读取 skill_text 的内容。`fact_check_skill.md` 设计了更完整的事实检查、URL 检查和去重，但 MVP 代码还没有实现这些增强能力。
 
 【核心函数逐行讲解: `check_agent.py` 的 `run`, 第 10-26 行】
 
-| 行 | 解释 |
-|---|---|
-| 10 | 定义 `run` 方法。 |
-| 11 | 遍历 `article_results`。 |
-| 12 | `issues = list(result.get("issues", []))` 复制已有问题列表。`list(...)` 避免直接操作原列表引用。 |
-| 13 | `article = result.get("article", {})` 取原文章信息。 |
-| 14 | `if not result.get("keep"):` 如果不保留。 |
-| 15 | `result["check_pass"] = False` 不保留的文章不算通过检查。 |
-| 16 | `result["issues"] = issues` 保留已有问题。 |
-| 17 | `continue` 跳过后续检查。 |
-| 18 | `if not result.get("summary"):` 检查摘要是否为空。 |
-| 19 | `issues.append("missing_summary")` 记录缺摘要。 |
-| 20 | `if not result.get("post_text"):` 检查 Markdown 正文是否为空。 |
-| 21 | `issues.append("missing_post_text")` 记录缺正文。 |
-| 22 | `if not article.get("url"):` 检查文章 URL。 |
-| 23 | `issues.append("missing_url")` 记录缺 URL。 |
-| 24 | `result["issues"] = issues` 把最终问题列表写回 result。 |
+| 行 | 解释                                                                                                            |
+| -- | --------------------------------------------------------------------------------------------------------------- |
+| 10 | 定义 `run` 方法。                                                                                             |
+| 11 | 遍历 `article_results`。                                                                                      |
+| 12 | `issues = list(result.get("issues", []))` 复制已有问题列表。`list(...)` 避免直接操作原列表引用。            |
+| 13 | `article = result.get("article", {})` 取原文章信息。                                                          |
+| 14 | `if not result.get("keep"):` 如果不保留。                                                                     |
+| 15 | `result["check_pass"] = False` 不保留的文章不算通过检查。                                                     |
+| 16 | `result["issues"] = issues` 保留已有问题。                                                                    |
+| 17 | `continue` 跳过后续检查。                                                                                     |
+| 18 | `if not result.get("summary"):` 检查摘要是否为空。                                                            |
+| 19 | `issues.append("missing_summary")` 记录缺摘要。                                                               |
+| 20 | `if not result.get("post_text"):` 检查 Markdown 正文是否为空。                                                |
+| 21 | `issues.append("missing_post_text")` 记录缺正文。                                                             |
+| 22 | `if not article.get("url"):` 检查文章 URL。                                                                   |
+| 23 | `issues.append("missing_url")` 记录缺 URL。                                                                   |
+| 24 | `result["issues"] = issues` 把最终问题列表写回 result。                                                       |
 | 25 | `result["check_pass"] = len(issues) == 0` 如果问题数量为 0，就通过。`len` 返回列表长度，`==` 是相等比较。 |
-| 26 | `return state` 返回 state。 |
+| 26 | `return state` 返回 state。                                                                                   |
 
 ### 5. FeedbackAgent
 
-【Agent 作用】  
+【Agent 作用】
 FeedbackAgent 负责从用户自然语言反馈中抽取结构化偏好信号，并判断情绪倾向。
 
-【输入】  
+【输入】
 读取 `state["feedback"]` 和 `feedback_extract_skill.md`。调用 LLMTool。
 
 【处理流程】
@@ -1025,30 +1025,30 @@ FeedbackAgent 负责从用户自然语言反馈中抽取结构化偏好信号，
 3. 写入 `extracted_feedback`。
 4. 如果有 issues，写入 `feedback_issues`。
 
-【输出】  
+【输出】
 写入 `state["sentiment"]`、`state["extracted_feedback"]`、可选 `state["feedback_issues"]`。
 
-【调用的工具】  
+【调用的工具】
 调用 LLMTool。当前代码不调用 MCP；Feedback skill 中允许的 embedding/search_similar_memory 暂未在 FeedbackAgent 中实现。不会直接更新用户画像，画像更新由 MemoryAgent 做。
 
 【核心函数逐行讲解: `feedback_agent.py` 的 `run`, 第 16-22 行】
 
-| 行 | 解释 |
-|---|---|
-| 16 | 定义 `run` 方法。 |
+| 行 | 解释                                                                                                                  |
+| -- | --------------------------------------------------------------------------------------------------------------------- |
+| 16 | 定义 `run` 方法。                                                                                                   |
 | 17 | `output = self.llm_tool.extract_feedback(...)` 把反馈列表和 skill_text 交给 LLMTool。`list(...)` 确保输入是列表。 |
-| 18 | `state["sentiment"] = output.sentiment` 写入情绪。 |
-| 19 | `state["extracted_feedback"] = output.extracted_feedback` 写入抽取出的偏好信号。 |
-| 20 | `if output.issues:` 如果结构化输出有问题。 |
-| 21 | `state["feedback_issues"] = output.issues` 把问题写到 state。 |
-| 22 | 返回 state 给 MemoryAgent。 |
+| 18 | `state["sentiment"] = output.sentiment` 写入情绪。                                                                  |
+| 19 | `state["extracted_feedback"] = output.extracted_feedback` 写入抽取出的偏好信号。                                    |
+| 20 | `if output.issues:` 如果结构化输出有问题。                                                                          |
+| 21 | `state["feedback_issues"] = output.issues` 把问题写到 state。                                                       |
+| 22 | 返回 state 给 MemoryAgent。                                                                                           |
 
 ### 6. MemoryAgent
 
-【Agent 作用】  
+【Agent 作用】
 MemoryAgent 负责把反馈结果更新到用户画像快照，并通过 MCP 记录 embedding 和 Neo4j interest graph 更新。当前 MVP 没有真正写 Milvus 向量，只调用了 embedding 和 Neo4j update。
 
-【输入】  
+【输入】
 读取 `run_id`、`user_profile_snapshot`、`extracted_feedback`、`sentiment`、`mcp_policy`。使用 `EmbeddingClient` 和 `Neo4jClient`。
 
 【处理流程】
@@ -1063,34 +1063,34 @@ MemoryAgent 负责把反馈结果更新到用户画像快照，并通过 MCP 记
 8. 如果允许 Neo4j，调用 `update_user_interest_graph`。
 9. 写回 `updated_profile_snapshot`。
 
-【输出】  
+【输出】
 写入 `state["updated_profile_snapshot"]` 和 `state["mcp_call_logs"]`。
 
-【调用的工具】  
+【调用的工具】
 不调用 LLM。调用 MCP Client。读取 skill_text 但当前没有使用其中规则做复杂画像合并。会更新用户画像快照。
 
 【核心函数逐行讲解: `memory_agent.py` 的 `run`, 第 22-48 行】
 
-| 行 | 解释 |
-|---|---|
-| 22 | 定义 `run` 方法。 |
-| 23 | 从 state 取 run_id，并转字符串。 |
-| 24 | `snapshot = dict(...)` 复制用户画像，避免直接改原对象。 |
-| 25 | `extracted = list(...)` 取抽取出的反馈信号并保证是列表。 |
-| 26 | `sentiment = str(...)` 取情绪，默认 `neutral`。 |
-| 27 | `logs = state.setdefault("mcp_call_logs", [])` 如果 state 没有 `mcp_call_logs`，就创建空列表；如果已有就返回已有列表。 |
-| 29 | 判断是否存在 embedding_client 且 policy 允许 embedding。 |
-| 30-35 | 调用 `embed_text`。第 31 行把所有 feedback 用空格拼成一个字符串；第 32 行传 metadata；第 33-34 行传 agent_name 和 run_id。 |
-| 36 | 把 embedding MCP 调用日志追加到全局 logs。 |
-| 38 | `snapshot["last_feedback_sentiment"] = sentiment` 更新最近反馈情绪。 |
-| 39 | 更新 `feedback_count`。这里用 `int(...)` 把字符串计数转整数，加上本次抽取条数，再转回字符串，符合 proto `map<string,string>`。 |
-| 40 | `if extracted:` 如果存在抽取结果。 |
-| 41 | `snapshot["latest_feedback"] = " | ".join(extracted[-3:])` 保存最近最多三条。`extracted[-3:]` 是 Python 切片，表示列表最后三项。 |
-| 43 | 判断是否存在 neo4j_client 且 policy 允许 Neo4j。 |
-| 44 | 调用 `update_profile`，底层 tool 是 `update_user_interest_graph`。 |
-| 45 | 追加 Neo4j MCP 调用日志。 |
-| 47 | `state["updated_profile_snapshot"] = snapshot` 把新画像写入 state。 |
-| 48 | 返回 state。 |
+| 行    | 解释                                                                                                                                 |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 22    | 定义 `run` 方法。                                                                                                                  |
+| 23    | 从 state 取 run_id，并转字符串。                                                                                                     |
+| 24    | `snapshot = dict(...)` 复制用户画像，避免直接改原对象。                                                                            |
+| 25    | `extracted = list(...)` 取抽取出的反馈信号并保证是列表。                                                                           |
+| 26    | `sentiment = str(...)` 取情绪，默认 `neutral`。                                                                                  |
+| 27    | `logs = state.setdefault("mcp_call_logs", [])` 如果 state 没有 `mcp_call_logs`，就创建空列表；如果已有就返回已有列表。           |
+| 29    | 判断是否存在 embedding_client 且 policy 允许 embedding。                                                                             |
+| 30-35 | 调用 `embed_text`。第 31 行把所有 feedback 用空格拼成一个字符串；第 32 行传 metadata；第 33-34 行传 agent_name 和 run_id。         |
+| 36    | 把 embedding MCP 调用日志追加到全局 logs。                                                                                           |
+| 38    | `snapshot["last_feedback_sentiment"] = sentiment` 更新最近反馈情绪。                                                               |
+| 39    | 更新 `feedback_count`。这里用 `int(...)` 把字符串计数转整数，加上本次抽取条数，再转回字符串，符合 proto `map<string,string>`。 |
+| 40    | `if extracted:` 如果存在抽取结果。                                                                                                 |
+| 41    | `snapshot["latest_feedback"] = "                                                                                                     |
+| 43    | 判断是否存在 neo4j_client 且 policy 允许 Neo4j。                                                                                     |
+| 44    | 调用 `update_profile`，底层 tool 是 `update_user_interest_graph`。                                                               |
+| 45    | 追加 Neo4j MCP 调用日志。                                                                                                            |
+| 47    | `state["updated_profile_snapshot"] = snapshot` 把新画像写入 state。                                                                |
+| 48    | 返回 state。                                                                                                                         |
 
 ## 第八部分: LLM 调用层讲解
 

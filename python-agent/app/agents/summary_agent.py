@@ -20,6 +20,7 @@ from app.agents.base import BaseAgent
 from app.contracts import JsonDict
 from app.tools import LLMTool, build_llm_tool
 from app.config import Settings
+from app.mcp.fetch_client import FetchClient
 
 
 # 类作用：
@@ -38,12 +39,18 @@ class SummaryAgent(BaseAgent):
     #
     # 返回值：
     # - 构造函数不返回值。
-    def __init__(self, skill_text: str = "", llm_tool: LLMTool | None = None) -> None:
+    def __init__(
+        self,
+        skill_text: str = "",
+        llm_tool: LLMTool | None = None,
+        fetch_client: FetchClient | None = None,
+    ) -> None:
         # 调用父类保存 skill_text。
         super().__init__(skill_text)
         # 复用 ArticleWorkflow 注入的 llm_tool，避免每个 Agent 重复读取配置。
         # 兜底创建 Settings() 主要方便单元测试直接实例化 SummaryAgent。
         self.llm_tool = llm_tool or build_llm_tool(Settings())
+        self.fetch_client = fetch_client
 
     # 函数作用：
     # 遍历筛选结果，对保留下来的文章生成摘要。
@@ -60,14 +67,29 @@ class SummaryAgent(BaseAgent):
     def run(self, state: JsonDict) -> JsonDict:
         # dict(...) 复制用户画像快照，作为 LLM 生成摘要时的上下文，不修改原始 state 字段。
         profile = dict(state.get("user_profile_snapshot", {}))
+        policy = dict(state.get("mcp_policy", {}))
+        run_id = str(state.get("run_id", ""))
         # 逐篇处理 FilterAgent 生成的结果项。
         for result in state.get("article_results", []):
             # keep=False 的文章已经被过滤，不进入摘要流程，避免浪费 LLM 调用。
             if not result.get("keep"):
                 continue
+            article = result["article"]
+            if (
+                policy.get("enable_fetch")
+                and not article.get("raw_text")
+                and article.get("url")
+                and self.fetch_client
+            ):
+                fetched = self.fetch_client.fetch_url(article["url"], agent_name=self.name, run_id=run_id)
+                result.setdefault("mcp_call_logs", []).append(fetched.log)
+                if fetched.log.get("success"):
+                    article["raw_text"] = str(fetched.result.get("raw_text") or fetched.result.get("text") or "")
+                else:
+                    result.setdefault("issues", []).append("summary_fetch_failed")
             # 调用 LLMTool 生成结构化摘要。
             # result["article"] 是原文数据，profile 是用户画像，skill_text 是摘要规则。
-            output = self.llm_tool.summarize(result["article"], profile, self.skill_text)
+            output = self.llm_tool.summarize(article, profile, self.skill_text)
             # 将 Pydantic 模型中的 summary 写回 result，供 RewriteAgent 使用。
             result["summary"] = output.summary
             # 如果 LLMTool 发生 repair 或 fallback，会把问题记录到 issues 中，便于后续排查。

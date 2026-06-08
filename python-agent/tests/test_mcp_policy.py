@@ -10,6 +10,7 @@
 #
 # 初学者阅读建议：
 # 先读 app/mcp/policy.py 中的 DEFAULT_AGENT_TOOL_PERMISSIONS，再看这些测试如何验证白名单生效。
+import json
 import unittest
 
 from app.mcp import EmbeddingClient, FetchClient, MCPPolicy, MockMcpTransport
@@ -18,6 +19,14 @@ from app.mcp import EmbeddingClient, FetchClient, MCPPolicy, MockMcpTransport
 # 类作用：
 # MCPPolicyTest 验证 MCP 权限和日志数据结构。
 class MCPPolicyTest(unittest.TestCase):
+    def test_only_memory_agent_can_batch_insert_or_delete_vectors(self) -> None:
+        policy = MCPPolicy()
+
+        self.assertTrue(policy.is_allowed("memory", "batch_insert_memory_vectors"))
+        self.assertTrue(policy.is_allowed("memory", "delete_memory_vectors"))
+        self.assertFalse(policy.is_allowed("filter", "batch_insert_memory_vectors"))
+        self.assertFalse(policy.is_allowed("filter", "delete_memory_vectors"))
+
     # 函数作用：
     # 验证 filter Agent 调用 embed_text 是授权行为，并记录成功日志。
     def test_authorized_call_records_context(self) -> None:
@@ -34,6 +43,9 @@ class MCPPolicyTest(unittest.TestCase):
         self.assertEqual(result.log["agent_name"], "filter")
         self.assertEqual(result.log["server_name"], "embedding-mcp")
         self.assertEqual(result.log["tool_name"], "embed_text")
+        self.assertTrue(result.log["call_id"])
+        self.assertEqual(json.loads(result.log["request_json"])["id"], result.log["call_id"])
+        self.assertEqual(json.loads(result.log["response_json"])["id"], result.log["call_id"])
         self.assertIn("embedding", result.result)
 
     # 函数作用：

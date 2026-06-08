@@ -51,6 +51,8 @@ class AgentState(TypedDict, total=False):
     sentiment: str
     # extracted_feedback 是 FeedbackAgent 从反馈文本中提取出的偏好信号。
     extracted_feedback: list[str]
+    structured_feedback: dict[str, Any]
+    profile_diff: dict[str, Any]
     # updated_profile_snapshot 是 MemoryAgent 基于反馈生成的新用户画像快照。
     updated_profile_snapshot: dict[str, str]
     # mcp_call_logs 记录 MCP 调用明细，便于 GoFrame 持久化到数据库中排查工具行为。

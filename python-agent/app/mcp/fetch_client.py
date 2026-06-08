@@ -36,7 +36,7 @@ class FetchClient(BaseMcpClient):
     # 返回值：
     # - 返回 McpCallResult，result 中通常包含 title、raw_text 等字段。
     def fetch_url(self, url: str, *, agent_name: str, run_id: str) -> McpCallResult:
-        # 通过父类 call_tool 统一执行权限判断、JSON-RPC 调用和日志生成。
+        # 通过父类 call_tool 统一执行权限判断、标准 MCP 调用和日志生成。
         return self.call_tool("fetch_webpage", {"url": url}, agent_name=agent_name, run_id=run_id)
 
     # 函数作用：

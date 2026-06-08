@@ -1,134 +1,156 @@
-# 文件作用：
-# 本文件实现 embedding-mcp 服务，负责把文本转换为向量。
-# 当前实现是确定性的 mock embedding，不调用真实模型；配置中预留了真实 embedding endpoint 字段。
-#
-# 在项目中的位置：
-# 本文件属于 MCP Server 层，被 Python Agent 的 EmbeddingClient 通过 JSON-RPC 调用。
-#
-# 主要内容：
-# 1. CONFIG：读取 embedding 维度和 mock 配置。
-# 2. TOOLS：声明 embed_text 和 embed_batch 工具。
-# 3. handle：根据工具名分发请求。
-# 4. _embed_one：用 SHA-256 生成稳定 mock 向量。
-#
-# 关键调用关系：
-# - Python Agent FilterAgent 用 embed_text 为文章生成向量。
-# - Python Agent MemoryAgent 用 embed_text 为反馈生成向量。
-#
-# 初学者阅读建议：
-# 注意这里的向量是 mock 逻辑，只保证稳定和可测试，不代表真实语义 embedding。
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 import sys
 
-# 将 mcp-servers/common 加入导入路径，使本服务能导入 simple_http_mcp。
-sys.path.append(str(Path(__file__).resolve().parents[1] / "common"))
 
+SERVER_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVER_DIR))
+sys.path.insert(0, str(SERVER_DIR.parent / "common"))
+
+from embedding_provider import EmbeddingProviderError, MemoryEmbeddingProvider, OpenAIEmbeddingProvider  # noqa: E402
+from provider import ManagedProvider, ProviderUnavailableError, read_secret  # noqa: E402
 from simple_http_mcp import ToolError, ToolSpec, require_str, run_server  # noqa: E402
 
 
-# DIMENSION 控制 mock 向量维度，默认 8。
-DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "8"))
-# CONFIG 会在 /health 中返回，帮助调用方确认服务模式。
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    return default if raw is None else raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _provider_mode() -> str:
+    explicit = os.getenv("EMBEDDING_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    return "memory" if _bool_env("EMBEDDING_MOCK_MODE", True) else "openai"
+
+
+def _optional_float(name: str) -> float | None:
+    value = os.getenv(name, "").strip()
+    return float(value) if value else None
+
+
+MODE = _provider_mode()
+DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "8" if MODE == "memory" else "3072"))
 CONFIG = {
-    "mock_mode": os.getenv("EMBEDDING_MOCK_MODE", "true").lower() != "false",
-    "real_embedding_endpoint": os.getenv("REAL_EMBEDDING_ENDPOINT", ""),
+    "mode": MODE,
+    "model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
     "dimension": DIMENSION,
+    "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 }
 
-# TOOLS 是本 MCP Server 对外暴露的工具清单。
+
+def _build_provider():
+    if MODE == "memory":
+        return MemoryEmbeddingProvider(dimension=DIMENSION)
+    if MODE != "openai":
+        raise EmbeddingProviderError(f"unsupported EMBEDDING_PROVIDER `{MODE}`")
+    return OpenAIEmbeddingProvider(
+        api_key=read_secret("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY_FILE", "")),
+        base_url=str(CONFIG["base_url"]),
+        model=str(CONFIG["model"]),
+        dimension=DIMENSION,
+        timeout_seconds=float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30")),
+        max_retries=int(os.getenv("EMBEDDING_MAX_RETRIES", "2")),
+        retry_backoff_seconds=float(os.getenv("EMBEDDING_RETRY_BACKOFF_SECONDS", "0.1")),
+        batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "64")),
+        max_chars_per_chunk=int(os.getenv("EMBEDDING_MAX_CHARS_PER_CHUNK", "12000")),
+        max_chunks=int(os.getenv("EMBEDDING_MAX_CHUNKS", "8")),
+        cache_size=int(os.getenv("EMBEDDING_CACHE_SIZE", "1024")),
+        cache_ttl_seconds=float(os.getenv("EMBEDDING_CACHE_TTL_SECONDS", "3600")),
+        cost_per_million_tokens_usd=_optional_float("EMBEDDING_COST_PER_MILLION_TOKENS_USD"),
+    )
+
+
+MANAGED = ManagedProvider(_build_provider, mode=MODE)
+
+EMBEDDING_RESULT_SCHEMA = {
+    "type": "object",
+    "required": ["embedding", "dim", "model", "provider", "mock"],
+    "properties": {
+        "embedding": {"type": "array", "items": {"type": "number"}},
+        "dim": {"type": "integer"},
+        "model": {"type": "string"},
+        "provider": {"type": "string"},
+        "mock": {"type": "boolean"},
+        "cache_hit": {"type": "boolean"},
+        "token_count": {"type": "integer"},
+        "latency_ms": {"type": "integer"},
+        "estimated_cost_usd": {"type": ["number", "null"]},
+        "truncated": {"type": "boolean"},
+        "chunk_count": {"type": "integer"},
+    },
+}
+
 TOOLS = [
-    # embed_text 处理单段文本。
     ToolSpec(
         name="embed_text",
-        description="Create a deterministic mock embedding for one text input.",
-        input_schema={"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}},
-        output_schema={
+        description="Create one embedding using the configured memory or OpenAI-compatible provider.",
+        input_schema={
             "type": "object",
-            "properties": {
-                "embedding": {"type": "array", "items": {"type": "number"}},
-                "dim": {"type": "integer"},
-                "model": {"type": "string"},
-                "mock": {"type": "boolean"},
-            },
+            "required": ["text"],
+            "properties": {"text": {"type": "string"}, "metadata": {"type": "object"}},
+            "additionalProperties": False,
         },
-        examples=[
-            {
-                "request": {"text": "agent workflow"},
-                "response": {"embedding": [0.1961, 0.5333], "dim": DIMENSION, "model": "mock-hash-embedding-v1"},
-            }
-        ],
+        output_schema=EMBEDDING_RESULT_SCHEMA,
+        examples=[{"request": {"text": "agent workflow"}, "response": {"embedding": [0.1], "dim": DIMENSION}}],
     ),
-    # embed_batch 批量处理多段文本。
     ToolSpec(
         name="embed_batch",
-        description="Create deterministic mock embeddings for multiple text inputs.",
-        input_schema={"type": "object", "required": ["texts"], "properties": {"texts": {"type": "array"}}},
-        output_schema={"type": "object", "properties": {"items": {"type": "array"}, "dim": {"type": "integer"}}},
-        examples=[
-            {
-                "request": {"texts": ["agent workflow", "knowledge memory"]},
-                "response": {"items": [{"index": 0, "embedding": [0.1961, 0.5333]}], "dim": DIMENSION},
-            }
-        ],
+        description="Create embeddings for multiple texts using bounded provider batches.",
+        input_schema={
+            "type": "object",
+            "required": ["texts"],
+            "properties": {
+                "texts": {"type": "array", "items": {"type": "string"}, "maxItems": 1024},
+                "metadata": {"type": "object"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "required": ["items", "embeddings", "dim", "model", "provider", "mock"],
+            "properties": {
+                "items": {"type": "array"},
+                "embeddings": {"type": "array"},
+                "dim": {"type": "integer"},
+                "model": {"type": "string"},
+                "provider": {"type": "string"},
+                "mock": {"type": "boolean"},
+                "token_count": {"type": "integer"},
+                "estimated_cost_usd": {"type": ["number", "null"]},
+            },
+        },
+        examples=[{"request": {"texts": ["agent workflow"]}, "response": {"items": [], "dim": DIMENSION}}],
     ),
 ]
 
 
-# 函数作用：
-# MCP 工具分发入口。
-#
-# 参数说明：
-# - tool：工具名。
-# - payload：工具参数。
-#
-# 返回值：
-# - 返回工具输出字典。
 def handle(tool: str, payload: dict[str, object]) -> dict[str, object]:
-    # embed_text 要求 text 字段是字符串。
-    if tool == "embed_text":
-        text = require_str(payload, "text")
-        return _embed_one(text)
-    # embed_batch 要求 texts 是字符串数组。
-    if tool == "embed_batch":
-        texts = payload.get("texts")
-        if not isinstance(texts, list):
-            raise ToolError("`texts` must be an array of strings", data={"field": "texts"})
-        # 字典展开 **_embed_one(...) 会把 embedding/dim/model/mock 合并进每个 item。
-        return {"items": [{"index": idx, **_embed_one(str(text))} for idx, text in enumerate(texts)], "dim": DIMENSION}
-    # 未知工具返回 JSON-RPC method not found。
-    raise ToolError(f"unknown tool `{tool}`", code=-32601)
+    try:
+        provider = MANAGED.get()
+        if tool == "embed_text":
+            return provider.embed_text(require_str(payload, "text"), payload.get("metadata"))  # type: ignore[attr-defined,arg-type]
+        if tool == "embed_batch":
+            texts = payload.get("texts")
+            if not isinstance(texts, list) or not all(isinstance(text, str) for text in texts):
+                raise ToolError("`texts` must be an array of strings", data={"field": "texts"})
+            return provider.embed_batch(texts, payload.get("metadata"))  # type: ignore[attr-defined,arg-type]
+        raise ToolError(f"unknown tool `{tool}`", code=-32601)
+    except ToolError:
+        raise
+    except (ProviderUnavailableError, EmbeddingProviderError) as exc:
+        raise ToolError(str(exc), data={"provider": MODE}) from exc
 
 
-# 函数作用：
-# 为单段文本生成确定性 mock embedding。
-#
-# 参数说明：
-# - text：待向量化文本。
-#
-# 返回值：
-# - 返回包含 embedding、dim、model、mock 的字典。
-def _embed_one(text: str) -> dict[str, object]:
-    # SHA-256 摘要稳定，同一文本每次得到同一向量，方便测试。
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    # values 保存 [-1, 1] 范围内的浮点向量。
-    values = []
-    # 如果 DIMENSION 大于 digest 长度，就用取模循环使用摘要字节。
-    for idx in range(DIMENSION):
-        byte = digest[idx % len(digest)]
-        # byte/255 映射到 0..1，再转换到 -1..1。
-        values.append(round((byte / 255.0) * 2 - 1, 6))
-    return {
-        "embedding": values,
-        "dim": DIMENSION,
-        "model": "mock-hash-embedding-v1",
-        "mock": CONFIG["mock_mode"],
-    }
-
-
-# 直接运行本文件时启动 HTTP MCP Server。
 if __name__ == "__main__":
-    run_server("embedding-mcp", int(os.getenv("PORT", "7001")), TOOLS, handle, CONFIG)
+    run_server(
+        "embedding-mcp",
+        int(os.getenv("PORT", "7001")),
+        TOOLS,
+        handle,
+        CONFIG,
+        health_provider=MANAGED.health,
+        lifecycle=MANAGED,
+    )

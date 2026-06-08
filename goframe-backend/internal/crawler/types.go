@@ -19,16 +19,17 @@ type Source struct {
 }
 
 type RawEntry struct {
-	SourceName    string
-	SourceType    SourceType
-	ExternalID    string
-	URL           string
-	Title         string
-	SourceContent string
-	Author        string
-	PublishedAt   string
-	Tags          []string
-	RawPayload    any
+	SourceName       string
+	SourceType       SourceType
+	ExternalID       string
+	URL              string
+	Title            string
+	RawSourceContent string
+	SourceContent    string
+	Author           string
+	PublishedAt      string
+	Tags             []string
+	RawPayload       any
 }
 
 type ErrorType string

@@ -5,7 +5,7 @@ import warnings
 
 import agent_pb2 as agent__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,8 +25,9 @@ if _version_not_supported:
     )
 
 
-class AgentServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+class AgentServiceStub:
+    """AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -51,23 +52,27 @@ class AgentServiceStub(object):
                 _registered_method=True)
 
 
-class AgentServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+class AgentServiceServicer:
+    """AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
+    """
 
     def HealthCheck(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """HealthCheck 用于检查 Python Agent Service 是否在线。
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def ProcessArticles(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """ProcessArticles 触发文章筛选、摘要、改写和校验流程。
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def ProcessFeedback(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """ProcessFeedback 触发反馈提取和用户画像更新流程。
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -98,8 +103,9 @@ def add_AgentServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class AgentService(object):
-    """Missing associated documentation comment in .proto file."""
+class AgentService:
+    """AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
+    """
 
     @staticmethod
     def HealthCheck(request,

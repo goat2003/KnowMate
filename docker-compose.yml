@@ -1,39 +1,258 @@
-# 文件作用：
-# 本文件定义 KnowMate 本地开发和端到端测试所需的 Docker 服务。
-# 当前只包含 MySQL，用于保存 articles、posts、feedback_logs、run_logs、user_profile_snapshot 和 mcp_call_logs。
-#
-# 注意：
-# YAML 支持 # 注释；本次只添加说明，不改变镜像、端口、环境变量、卷和健康检查含义。
 services:
-  # mysql 服务为 GoFrame 后端提供持久化数据库。
   mysql:
-    # 使用 MySQL 8.0，支持 JSON 字段和 utf8mb4。
     image: mysql:8.0
-    # 固定容器名，便于脚本 docker compose exec mysql。
-    container_name: knowledge-post-agent-mysql
-    # unless-stopped 表示非手动停止时自动重启。
     restart: unless-stopped
-    # environment 初始化 root 密码、默认数据库、普通用户和时区。
     environment:
-      MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: knowledge_post_agent
-      MYSQL_USER: app
-      MYSQL_PASSWORD: apppass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-knowledge_post_agent}
+      MYSQL_USER: ${MYSQL_USER:-app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-apppass}
       TZ: Asia/Shanghai
-    # 将容器 3306 映射到本机 3306，GoFrame 默认 DSN 会连接该端口。
     ports:
-      - "3306:3306"
-    # volumes 保存数据库数据，并把初始化 SQL 挂载到 MySQL 官方入口目录。
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./shared/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-    # healthcheck 用 mysqladmin ping 判断 MySQL 是否已可接受连接。
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  embedding-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    environment:
+      MCP_SERVER: embedding-mcp
+      MCP_TRANSPORT: streamable_http
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-memory}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-3072}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY_FILE: ${OPENAI_API_KEY_FILE:-}
+      EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-30}
+      EMBEDDING_MAX_RETRIES: ${EMBEDDING_MAX_RETRIES:-2}
+      EMBEDDING_RETRY_BACKOFF_SECONDS: ${EMBEDDING_RETRY_BACKOFF_SECONDS:-0.1}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-64}
+      EMBEDDING_MAX_CHARS_PER_CHUNK: ${EMBEDDING_MAX_CHARS_PER_CHUNK:-12000}
+      EMBEDDING_MAX_CHUNKS: ${EMBEDDING_MAX_CHUNKS:-8}
+      EMBEDDING_CACHE_SIZE: ${EMBEDDING_CACHE_SIZE:-1024}
+      EMBEDDING_CACHE_TTL_SECONDS: ${EMBEDDING_CACHE_TTL_SECONDS:-3600}
+      EMBEDDING_COST_PER_MILLION_TOKENS_USD: ${EMBEDDING_COST_PER_MILLION_TOKENS_USD:-}
+    ports:
+      - "${EMBEDDING_MCP_PORT:-7001}:7001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fetch-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    environment:
+      MCP_SERVER: fetch-mcp
+      MCP_TRANSPORT: streamable_http
+      FETCH_MOCK_MODE: "true"
+    ports:
+      - "${FETCH_MCP_PORT:-7002}:7002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7002/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  milvus-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    environment:
+      MCP_SERVER: milvus-mcp
+      MCP_TRANSPORT: streamable_http
+      MILVUS_PROVIDER: ${MILVUS_PROVIDER:-memory}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus-standalone:19530}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      MILVUS_TOKEN_FILE: ${MILVUS_TOKEN_FILE:-}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-user_memory_vectors}
+      MILVUS_DIMENSION: ${EMBEDDING_DIMENSION:-3072}
+      MILVUS_TIMEOUT_SECONDS: ${MILVUS_TIMEOUT_SECONDS:-10}
+    ports:
+      - "${MILVUS_MCP_PORT:-7003}:7003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7003/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  neo4j-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    environment:
+      MCP_SERVER: neo4j-mcp
+      MCP_TRANSPORT: streamable_http
+      NEO4J_PROVIDER: ${NEO4J_PROVIDER:-memory}
+      NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_PASSWORD_FILE: ${NEO4J_PASSWORD_FILE:-}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+    ports:
+      - "${NEO4J_MCP_PORT:-7004}:7004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7004/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  milvus-etcd:
+    profiles: ["production"]
+    image: quay.io/coreos/etcd:v3.5.18
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - milvus-etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
 
-# 命名卷用于持久化 MySQL 数据。
+  milvus-minio:
+    profiles: ["production"]
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - milvus-minio-data:/minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  milvus-standalone:
+    profiles: ["production"]
+    image: milvusdb/milvus:v2.5.27
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-}
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_HEALTH_PORT:-9091}:9091"
+    volumes:
+      - milvus-data:/var/lib/milvus
+    depends_on:
+      milvus-etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  neo4j:
+    profiles: ["production"]
+    image: neo4j:2026.05.0
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p \"$$NEO4J_PASSWORD\" \"RETURN 1\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  python-agent:
+    build:
+      context: .
+      dockerfile: python-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: 50051
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      MOCK_MCP: "false"
+      EMBEDDING_MCP_TRANSPORT: streamable_http
+      FETCH_MCP_TRANSPORT: streamable_http
+      MILVUS_MCP_TRANSPORT: streamable_http
+      NEO4J_MCP_TRANSPORT: streamable_http
+      EMBEDDING_MCP_URL: http://embedding-mcp:7001/mcp
+      FETCH_MCP_URL: http://fetch-mcp:7002/mcp
+      MILVUS_MCP_URL: http://milvus-mcp:7003/mcp
+      NEO4J_MCP_URL: http://neo4j-mcp:7004/mcp
+    ports:
+      - "${AGENT_PORT:-50051}:50051"
+    depends_on:
+      embedding-mcp:
+        condition: service_healthy
+      fetch-mcp:
+        condition: service_healthy
+      milvus-mcp:
+        condition: service_healthy
+      neo4j-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc,agent_pb2,agent_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:50051'); agent_pb2_grpc.AgentServiceStub(c).HealthCheck(agent_pb2.HealthCheckRequest(client='docker'), timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  goframe-backend:
+    build:
+      context: .
+      dockerfile: goframe-backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      GOFRAME_HTTP_ADDR: :8080
+      AGENT_GRPC_ADDR: python-agent:50051
+      MYSQL_DSN: "${MYSQL_USER:-app}:${MYSQL_PASSWORD:-apppass}@tcp(mysql:3306)/${MYSQL_DATABASE:-knowledge_post_agent}?charset=utf8mb4&parseTime=true&loc=Local"
+      SCHEMA_PATH: /app/shared/sql/init.sql
+      OUTPUT_DIR: /app/shared/outputs
+    ports:
+      - "${GOFRAME_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./shared/outputs:/app/shared/outputs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      python-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   mysql-data:
+  milvus-etcd-data:
+  milvus-minio-data:
+  milvus-data:
+  neo4j-data:
+  neo4j-logs:

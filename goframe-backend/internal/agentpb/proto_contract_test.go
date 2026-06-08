@@ -60,9 +60,23 @@ func TestAgentProtoContract(t *testing.T) {
 		}
 	}
 
+	breakdown := file.Messages().ByName("ScoreBreakdownItem")
+	if breakdown == nil {
+		t.Fatal("ScoreBreakdownItem is missing")
+	}
+	for _, name := range []string{"dimension", "available", "raw_score", "normalized_score", "weight", "contribution", "evidence"} {
+		if breakdown.Fields().ByName(protoreflect.Name(name)) == nil {
+			t.Fatalf("ScoreBreakdownItem.%s is missing", name)
+		}
+	}
+
 	// 检查文章处理结果消息的关键字段。
 	result := file.Messages().ByName("ArticleProcessResult")
-	for _, name := range []string{"article_id", "keep", "score", "summary", "post_text", "check_pass", "issues", "mcp_call_logs"} {
+	for _, name := range []string{
+		"article_id", "keep", "score", "summary", "post_text", "check_pass",
+		"issues", "mcp_call_logs", "score_breakdown", "recommendation_reasons",
+		"rejection_reasons", "rank_position",
+	} {
 		if result.Fields().ByName(protoreflect.Name(name)) == nil {
 			t.Fatalf("ArticleProcessResult.%s is missing", name)
 		}
@@ -70,9 +84,19 @@ func TestAgentProtoContract(t *testing.T) {
 
 	// 检查 MCP 调用日志消息字段，确保 GoFrame 能持久化 Python Agent 返回的日志。
 	mcpLog := file.Messages().ByName("McpCallLog")
-	for _, name := range []string{"run_id", "agent_name", "server_name", "tool_name", "request_json", "response_json", "status", "error_message", "success", "latency_ms"} {
+	for _, name := range []string{"run_id", "agent_name", "server_name", "tool_name", "request_json", "response_json", "status", "error_message", "success", "latency_ms", "call_id"} {
 		if mcpLog.Fields().ByName(protoreflect.Name(name)) == nil {
 			t.Fatalf("McpCallLog.%s is missing", name)
+		}
+	}
+
+	feedback := file.Messages().ByName("ProcessFeedbackResponse")
+	for _, name := range []string{
+		"run_id", "sentiment", "extracted_feedback", "updated_profile_snapshot",
+		"mcp_call_logs", "structured_feedback_json", "profile_diff_json",
+	} {
+		if feedback.Fields().ByName(protoreflect.Name(name)) == nil {
+			t.Fatalf("ProcessFeedbackResponse.%s is missing", name)
 		}
 	}
 }

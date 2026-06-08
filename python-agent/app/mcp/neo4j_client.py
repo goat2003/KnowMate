@@ -74,6 +74,7 @@ class Neo4jClient(BaseMcpClient):
         return self.call_tool(
             "update_user_interest_graph",
             {
+                "event_id": run_id,
                 # user_id 从 snapshot 中读取，缺失时使用 default-user 保证 payload 完整。
                 "user_id": str(snapshot.get("user_id", "default-user")),
                 # snapshot 是更新后的快照，供 MCP Server 同步到图谱节点属性。

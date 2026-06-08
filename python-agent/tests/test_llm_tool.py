@@ -15,7 +15,7 @@
 import os
 import unittest
 
-from app.config import LLMSettings, OpenAISettings
+from app.config import ClaudeSettings, LLMSettings, OpenAISettings
 from app.tools.llm_tool import LLMClient, LLMTool, MockLLMClient, SummaryLLMOutput, build_llm_client
 
 
@@ -96,6 +96,18 @@ class LLMToolTest(unittest.TestCase):
             LLMSettings(
                 provider="openai",
                 openai=OpenAISettings(api_key_env="MISSING_OPENAI_KEY"),
+            )
+        )
+
+        self.assertIsInstance(client, MockLLMClient)
+        self.assertTrue(warnings)
+
+    def test_claude_without_api_key_falls_back_to_mock(self) -> None:
+        os.environ.pop("MISSING_ANTHROPIC_KEY", None)
+        client, warnings = build_llm_client(
+            LLMSettings(
+                provider="claude",
+                claude=ClaudeSettings(api_key_env="MISSING_ANTHROPIC_KEY"),
             )
         )
 

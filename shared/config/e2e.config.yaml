@@ -12,20 +12,28 @@ mysql:
 schema:
   path: "../shared/sql/init.sql"
 
-rss:
+crawler:
+  user_agent: "KnowMateCrawler/1.0"
+  request_timeout_seconds: 10
+  retry_times: 3
+  retry_backoff_milliseconds: 250
+  max_retry_delay_milliseconds: 30000
+  per_host_interval_milliseconds: 0
+  max_response_bytes: 5242880
+  robots_cache_seconds: 3600
+  source_max_items: 10
+  run_max_articles: 20
   sources:
     - name: "mock-knowledge-feed"
+      type: "mock"
       url: "mock://sample"
       enabled: true
       max_items: 5
     - name: "example-real-feed"
+      type: "feed"
       url: "https://hnrss.org/newest?q=AI"
       enabled: false
       max_items: 5
-
-crawler:
-  source_max_items: 10
-  run_max_articles: 20
 
 output:
   dir: "../shared/outputs"

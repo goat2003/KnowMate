@@ -26,6 +26,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from app.recommendation import RecommendationSettings
+
 # yaml 是可选依赖；缺失时仍允许模块导入，便于只做语法检查或部分单元测试。
 try:
     import yaml
@@ -89,6 +91,7 @@ class OpenAISettings:
 # 当前 Claude 调用在 LLMTool 中是预留接口，尚未实现真实 HTTP 调用。
 @dataclass(slots=True)
 class ClaudeSettings:
+    base_url: str = "https://api.anthropic.com/v1"
     # api_key_env 指定 Claude API Key 的环境变量名。
     api_key_env: str = "ANTHROPIC_API_KEY"
     # model 是未来 Claude 调用使用的模型名称。
@@ -108,6 +111,16 @@ class LLMSettings:
     claude: ClaudeSettings = field(default_factory=ClaudeSettings)
 
 
+@dataclass(slots=True)
+class McpServerSettings:
+    transport: str = "memory"
+    url: str = ""
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
+
+
 # 类作用：
 # Settings 是 Python Agent Service 的完整运行配置。
 # server.py、grpc_server.py、workflow/graph.py 都会读取它。
@@ -121,12 +134,25 @@ class Settings:
     version: str = "0.1.0"
     # mock_llm 表示是否使用 mock LLM provider。
     mock_llm: bool = True
-    # mock_mcp 表示是否使用 MockMcpTransport。
+    # mock_mcp 是旧配置兼容开关；新配置优先使用每个 server 的 transport。
     mock_mcp: bool = True
     # mcp_urls 保存真实 MCP Server 的 endpoint 配置。
     mcp_urls: dict[str, str] = field(default_factory=dict)
     # llm 保存 provider 和模型相关配置。
     llm: LLMSettings = field(default_factory=LLMSettings)
+    grpc_max_workers: int = 10
+    grpc_max_message_bytes: int = 4 * 1024 * 1024
+    max_articles_per_request: int = 100
+    max_feedback_per_request: int = 100
+    idempotency_cache_size: int = 1024
+    mcp_timeout_seconds: float = 8.0
+    mcp_max_retries: int = 2
+    mcp_retry_backoff_seconds: float = 0.1
+    mcp_circuit_failure_threshold: int = 3
+    mcp_circuit_reset_seconds: float = 30.0
+    mcp_memory_fallback: bool = False
+    mcp_servers: dict[str, McpServerSettings] = field(default_factory=dict)
+    recommendation: RecommendationSettings = field(default_factory=RecommendationSettings)
 
 
 # 函数作用：
@@ -152,11 +178,15 @@ def load_settings() -> Settings:
     agent = raw.get("agent", {})
     mock = raw.get("mock", {})
     mcp = raw.get("mcp", {})
+    limits = raw.get("limits", {})
     llm = raw.get("llm", {})
+    recommendation = raw.get("recommendation", {})
     # 单独加载 LLM 配置，因为 provider 选择涉及 mock 配置和环境变量覆盖。
     llm_settings = _load_llm_settings(llm, mock)
 
     # 创建最终 Settings；每个字段都允许环境变量覆盖 YAML。
+    mock_mcp = _bool_env("MOCK_MCP", bool(mock.get("mcp", True)))
+    mcp_servers = _load_mcp_servers(mcp, mock_mcp)
     return Settings(
         host=os.getenv("AGENT_HOST", agent.get("host", "0.0.0.0")),
         port=int(os.getenv("AGENT_PORT", agent.get("port", 50051))),
@@ -164,8 +194,33 @@ def load_settings() -> Settings:
         # mock_llm 由最终 provider 是否为 mock 推导，避免 YAML 和实际 provider 不一致。
         mock_llm=llm_settings.provider == "mock",
         # MOCK_MCP 环境变量优先，其次使用 config.yaml 中 mock.mcp，最后默认 True。
-        mock_mcp=_bool_env("MOCK_MCP", bool(mock.get("mcp", True))),
+        mock_mcp=mock_mcp,
         llm=llm_settings,
+        grpc_max_workers=max(int(os.getenv("GRPC_MAX_WORKERS", limits.get("grpc_max_workers", 10))), 1),
+        grpc_max_message_bytes=max(int(os.getenv("GRPC_MAX_MESSAGE_BYTES", limits.get("grpc_max_message_bytes", 4 * 1024 * 1024))), 1024),
+        max_articles_per_request=max(int(os.getenv("MAX_ARTICLES_PER_REQUEST", limits.get("max_articles_per_request", 100))), 1),
+        max_feedback_per_request=max(int(os.getenv("MAX_FEEDBACK_PER_REQUEST", limits.get("max_feedback_per_request", 100))), 1),
+        idempotency_cache_size=max(int(os.getenv("IDEMPOTENCY_CACHE_SIZE", limits.get("idempotency_cache_size", 1024))), 1),
+        mcp_timeout_seconds=max(float(os.getenv("MCP_TIMEOUT_SECONDS", limits.get("mcp_timeout_seconds", 8))), 0.1),
+        mcp_max_retries=max(int(os.getenv("MCP_MAX_RETRIES", limits.get("mcp_max_retries", 2))), 0),
+        mcp_retry_backoff_seconds=max(
+            float(os.getenv("MCP_RETRY_BACKOFF_SECONDS", limits.get("mcp_retry_backoff_seconds", 0.1))),
+            0,
+        ),
+        mcp_circuit_failure_threshold=max(
+            int(os.getenv("MCP_CIRCUIT_FAILURE_THRESHOLD", limits.get("mcp_circuit_failure_threshold", 3))),
+            1,
+        ),
+        mcp_circuit_reset_seconds=max(
+            float(os.getenv("MCP_CIRCUIT_RESET_SECONDS", limits.get("mcp_circuit_reset_seconds", 30))),
+            0,
+        ),
+        mcp_memory_fallback=_bool_env(
+            "MCP_MEMORY_FALLBACK",
+            bool(mcp.get("memory_fallback", False)),
+        ),
+        mcp_servers=mcp_servers,
+        recommendation=RecommendationSettings.from_dict(recommendation),
         # MCP endpoint 既可来自环境变量，也可来自 config.yaml。
         mcp_urls={
             "embedding": os.getenv("EMBEDDING_MCP_URL", mcp.get("embedding", "http://127.0.0.1:7001")),
@@ -174,6 +229,48 @@ def load_settings() -> Settings:
             "neo4j": os.getenv("NEO4J_MCP_URL", mcp.get("neo4j", "http://127.0.0.1:7004")),
         },
     )
+
+
+def _load_mcp_servers(raw: dict[str, Any], mock_mcp: bool) -> dict[str, McpServerSettings]:
+    server_names = ["embedding-mcp", "fetch-mcp", "milvus-mcp", "neo4j-mcp"]
+    legacy_keys = {
+        "embedding-mcp": "embedding",
+        "fetch-mcp": "fetch",
+        "milvus-mcp": "milvus",
+        "neo4j-mcp": "neo4j",
+    }
+    url_envs = {
+        "embedding-mcp": "EMBEDDING_MCP_URL",
+        "fetch-mcp": "FETCH_MCP_URL",
+        "milvus-mcp": "MILVUS_MCP_URL",
+        "neo4j-mcp": "NEO4J_MCP_URL",
+    }
+    transport_envs = {
+        "embedding-mcp": "EMBEDDING_MCP_TRANSPORT",
+        "fetch-mcp": "FETCH_MCP_TRANSPORT",
+        "milvus-mcp": "MILVUS_MCP_TRANSPORT",
+        "neo4j-mcp": "NEO4J_MCP_TRANSPORT",
+    }
+    configured = raw.get("servers", {})
+    servers: dict[str, McpServerSettings] = {}
+    for name in server_names:
+        item = configured.get(name, {}) if isinstance(configured, dict) else {}
+        default_transport = "memory" if mock_mcp else "streamable_http"
+        transport = os.getenv(
+            transport_envs[name],
+            str(item.get("transport", default_transport)),
+        ).strip().lower().replace("-", "_")
+        legacy_url = str(raw.get(legacy_keys[name], ""))
+        url = os.getenv(url_envs[name], str(item.get("url") or legacy_url))
+        servers[name] = McpServerSettings(
+            transport=transport,
+            url=url,
+            command=str(item.get("command", "")),
+            args=[str(value) for value in item.get("args", [])],
+            env={str(key): str(value) for key, value in item.get("env", {}).items()},
+            headers={str(key): str(value) for key, value in item.get("headers", {}).items()},
+        )
+    return servers
 
 
 # 函数作用：
@@ -207,6 +304,7 @@ def _load_llm_settings(raw: dict[str, Any], mock: dict[str, Any]) -> LLMSettings
             model=os.getenv("OPENAI_MODEL", openai.get("model") or "gpt-4.1-mini"),
         ),
         claude=ClaudeSettings(
+            base_url=os.getenv("ANTHROPIC_BASE_URL", claude.get("base_url") or "https://api.anthropic.com/v1"),
             api_key_env=os.getenv("ANTHROPIC_API_KEY_ENV", claude.get("api_key_env") or "ANTHROPIC_API_KEY"),
             model=os.getenv("ANTHROPIC_MODEL", claude.get("model") or "claude-3-5-sonnet-latest"),
         ),

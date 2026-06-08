@@ -76,16 +76,17 @@ func (a arxivAdapter) Parse(source Source, payload []byte) ([]RawEntry, error) {
 		}
 		entryURL := atomEntryURL(entry)
 		result = append(result, RawEntry{
-			SourceName:    source.Name,
-			SourceType:    a.Type(),
-			ExternalID:    firstAdapterNonEmpty(entry.ID, entryURL, entry.Title),
-			URL:           entryURL,
-			Title:         strings.TrimSpace(entry.Title),
-			SourceContent: CleanHTMLFragment(entry.Summary),
-			Author:        atomAuthors(entry.Authors),
-			PublishedAt:   adapterPublishedAt(entry.PublishedParsed, entry.UpdatedParsed, entry.Published, entry.Updated),
-			Tags:          atomCategories(entry.Categories),
-			RawPayload:    entry,
+			SourceName:       source.Name,
+			SourceType:       a.Type(),
+			ExternalID:       firstAdapterNonEmpty(entry.ID, entryURL, entry.Title),
+			URL:              entryURL,
+			Title:            strings.TrimSpace(entry.Title),
+			RawSourceContent: entry.Summary,
+			SourceContent:    CleanHTMLFragment(entry.Summary),
+			Author:           atomAuthors(entry.Authors),
+			PublishedAt:      adapterPublishedAt(entry.PublishedParsed, entry.UpdatedParsed, entry.Published, entry.Updated),
+			Tags:             atomCategories(entry.Categories),
+			RawPayload:       entry,
 		})
 	}
 	return result, nil
@@ -114,16 +115,17 @@ func (a githubReleaseAdapter) Parse(source Source, payload []byte) ([]RawEntry, 
 			content = firstAdapterNonEmpty(entry.Content.Value, content)
 		}
 		result = append(result, RawEntry{
-			SourceName:    source.Name,
-			SourceType:    a.Type(),
-			ExternalID:    firstAdapterNonEmpty(entry.ID, entryURL, entry.Title),
-			URL:           entryURL,
-			Title:         strings.TrimSpace(entry.Title),
-			SourceContent: CleanHTMLFragment(content),
-			Author:        atomAuthors(entry.Authors),
-			PublishedAt:   adapterPublishedAt(entry.PublishedParsed, entry.UpdatedParsed, entry.Published, entry.Updated),
-			Tags:          tags,
-			RawPayload:    entry,
+			SourceName:       source.Name,
+			SourceType:       a.Type(),
+			ExternalID:       firstAdapterNonEmpty(entry.ID, entryURL, entry.Title),
+			URL:              entryURL,
+			Title:            strings.TrimSpace(entry.Title),
+			RawSourceContent: content,
+			SourceContent:    CleanHTMLFragment(content),
+			Author:           atomAuthors(entry.Authors),
+			PublishedAt:      adapterPublishedAt(entry.PublishedParsed, entry.UpdatedParsed, entry.Published, entry.Updated),
+			Tags:             tags,
+			RawPayload:       entry,
 		})
 	}
 	return result, nil
@@ -149,16 +151,17 @@ func (a huggingFaceAdapter) Parse(source Source, payload []byte) ([]RawEntry, er
 		}
 		paperURL := huggingFacePaperURL(item)
 		result = append(result, RawEntry{
-			SourceName:    source.Name,
-			SourceType:    a.Type(),
-			ExternalID:    firstAdapterNonEmpty(item.GUID, paperURL, item.Title),
-			URL:           paperURL,
-			Title:         strings.TrimSpace(item.Title),
-			SourceContent: CleanHTMLFragment(firstAdapterNonEmpty(item.Content, item.Description)),
-			Author:        universalAuthors(item),
-			PublishedAt:   adapterPublishedAt(item.PublishedParsed, item.UpdatedParsed, item.Published, item.Updated),
-			Tags:          appendUnique(nil, item.Categories...),
-			RawPayload:    item,
+			SourceName:       source.Name,
+			SourceType:       a.Type(),
+			ExternalID:       firstAdapterNonEmpty(item.GUID, paperURL, item.Title),
+			URL:              paperURL,
+			Title:            strings.TrimSpace(item.Title),
+			RawSourceContent: firstAdapterNonEmpty(item.Content, item.Description),
+			SourceContent:    CleanHTMLFragment(firstAdapterNonEmpty(item.Content, item.Description)),
+			Author:           universalAuthors(item),
+			PublishedAt:      adapterPublishedAt(item.PublishedParsed, item.UpdatedParsed, item.Published, item.Updated),
+			Tags:             appendUnique(nil, item.Categories...),
+			RawPayload:       item,
 		})
 	}
 	return result, nil
@@ -194,13 +197,14 @@ func (a mockAdapter) Parse(source Source, _ []byte) ([]RawEntry, error) {
 	result := make([]RawEntry, 0, len(seeds))
 	for _, seed := range seeds {
 		result = append(result, RawEntry{
-			SourceName:    source.Name,
-			SourceType:    a.Type(),
-			ExternalID:    seed.id,
-			URL:           seed.url,
-			Title:         seed.title,
-			SourceContent: seed.content,
-			Tags:          seed.tags,
+			SourceName:       source.Name,
+			SourceType:       a.Type(),
+			ExternalID:       seed.id,
+			URL:              seed.url,
+			Title:            seed.title,
+			RawSourceContent: seed.content,
+			SourceContent:    seed.content,
+			Tags:             seed.tags,
 			RawPayload: map[string]any{
 				"external_id": seed.id,
 				"url":         seed.url,
@@ -281,16 +285,17 @@ func mapUniversalItems(source Source, sourceType SourceType, items []*gofeed.Ite
 			continue
 		}
 		result = append(result, RawEntry{
-			SourceName:    source.Name,
-			SourceType:    sourceType,
-			ExternalID:    firstAdapterNonEmpty(item.GUID, item.Link, item.Title),
-			URL:           strings.TrimSpace(item.Link),
-			Title:         strings.TrimSpace(item.Title),
-			SourceContent: CleanHTMLFragment(firstAdapterNonEmpty(item.Content, item.Description)),
-			Author:        universalAuthors(item),
-			PublishedAt:   adapterPublishedAt(item.PublishedParsed, item.UpdatedParsed, item.Published, item.Updated),
-			Tags:          appendUnique(nil, item.Categories...),
-			RawPayload:    item,
+			SourceName:       source.Name,
+			SourceType:       sourceType,
+			ExternalID:       firstAdapterNonEmpty(item.GUID, item.Link, item.Title),
+			URL:              strings.TrimSpace(item.Link),
+			Title:            strings.TrimSpace(item.Title),
+			RawSourceContent: firstAdapterNonEmpty(item.Content, item.Description),
+			SourceContent:    CleanHTMLFragment(firstAdapterNonEmpty(item.Content, item.Description)),
+			Author:           universalAuthors(item),
+			PublishedAt:      adapterPublishedAt(item.PublishedParsed, item.UpdatedParsed, item.Published, item.Updated),
+			Tags:             appendUnique(nil, item.Categories...),
+			RawPayload:       item,
 		})
 	}
 	return result

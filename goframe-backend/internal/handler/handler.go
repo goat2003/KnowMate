@@ -23,13 +23,16 @@
 package handler
 
 import (
+	"context"
 	// encoding/json 用于解析 POST /feedback 的 JSON 请求体。
 	"encoding/json"
 	// strconv 用于把 query 参数 limit 转成 int。
 	"strconv"
 
+	"knowledge-post-agent/goframe-backend/internal/agentpb"
 	// harness 是业务编排层，负责调用 RSS、MySQL、Python gRPC 和 Markdown 输出。
 	"knowledge-post-agent/goframe-backend/internal/logic/harness"
+	"knowledge-post-agent/goframe-backend/internal/model"
 	// store 是 MySQL 数据访问层。
 	"knowledge-post-agent/goframe-backend/internal/store"
 
@@ -43,9 +46,33 @@ import (
 // 它不直接写 SQL 或调用 gRPC，而是把请求委托给 store 和 harness。
 type Handler struct {
 	// store 用于健康检查、查询 posts 和 run_logs。
-	store *store.Store
+	store handlerStore
 	// harness 用于执行完整文章任务和反馈任务。
-	harness *harness.Harness
+	harness handlerRunner
+}
+
+type handlerStore interface {
+	Ping(context.Context) error
+	ListPosts(context.Context, int) ([]model.Post, error)
+	ListRunLogs(context.Context, int) ([]model.RunLog, error)
+	ListTaskRuns(context.Context, model.TaskRunFilter) ([]model.TaskRun, error)
+	TaskRun(context.Context, string) (model.TaskRun, error)
+	ListTaskSteps(context.Context, string) ([]model.TaskStep, error)
+	ActiveUserProfileSnapshot(context.Context, string) (model.UserProfileSnapshot, error)
+	ListUserProfileSnapshots(context.Context, string, int) ([]model.UserProfileSnapshot, error)
+	RollbackUserProfileSnapshot(context.Context, string, int, string) (model.UserProfileSnapshot, error)
+	RecommendationExplanationByPostID(context.Context, string) (model.RecommendationExplanation, error)
+}
+
+type handlerRunner interface {
+	AgentHealth(context.Context) (*agentpb.HealthCheckResponse, error)
+	RunArticles(context.Context) harness.RunArticlesResult
+	ProcessFeedback(context.Context, harness.FeedbackRequest) harness.FeedbackResult
+	RebuildProfile(context.Context, harness.RebuildProfileRequest) harness.RebuildProfileResult
+	ListTaskRuns(context.Context, model.TaskRunFilter) ([]model.TaskRun, error)
+	GetTaskRun(context.Context, string) (model.TaskRun, error)
+	CancelTask(context.Context, string) (model.TaskRun, error)
+	RetryTaskRun(context.Context, string) harness.RetryTaskResult
 }
 
 // 函数作用：
@@ -59,6 +86,10 @@ type Handler struct {
 // - 返回 *Handler。
 func New(store *store.Store, runner *harness.Harness) *Handler {
 	// 使用结构体字面量保存依赖，后续方法通过接收者 h 访问。
+	return &Handler{store: store, harness: runner}
+}
+
+func NewWithDependencies(store handlerStore, runner handlerRunner) *Handler {
 	return &Handler{store: store, harness: runner}
 }
 
@@ -87,6 +118,15 @@ func (h *Handler) Register(server *ghttp.Server) {
 
 		// GET /run-logs 查询最近任务运行日志。
 		group.GET("/run-logs", h.ListRunLogs)
+		group.GET("/runs", h.ListRuns)
+		group.GET("/runs/{run_id}", h.GetRun)
+		group.POST("/runs/{run_id}/cancel", h.CancelRun)
+		group.POST("/runs/{run_id}/retry", h.RetryRun)
+		group.GET("/profile", h.GetProfile)
+		group.GET("/profile/history", h.ListProfileHistory)
+		group.POST("/profile/rollback", h.RollbackProfile)
+		group.GET("/recommendations/explain", h.GetRecommendationExplanation)
+		group.POST("/profile/rebuild", h.RebuildProfile)
 	})
 }
 
@@ -215,6 +255,128 @@ func (h *Handler) ListRunLogs(r *ghttp.Request) {
 		return
 	}
 	r.Response.WriteJson(g.Map{"ok": true, "items": logs})
+}
+
+func (h *Handler) ListRuns(r *ghttp.Request) {
+	filter := model.TaskRunFilter{
+		TaskType: r.GetQuery("task_type").String(),
+		UserID:   r.GetQuery("user_id").String(),
+		Status:   r.GetQuery("status").String(),
+		Limit:    queryLimit(r),
+	}
+	items, err := h.harness.ListTaskRuns(r.Context(), filter)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "items": items})
+}
+
+func (h *Handler) GetRun(r *ghttp.Request) {
+	runID := r.Get("run_id").String()
+	if runID == "" {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "run_id is required"})
+		return
+	}
+	task, err := h.harness.GetTaskRun(r.Context(), runID)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "run": task})
+}
+
+func (h *Handler) CancelRun(r *ghttp.Request) {
+	runID := r.Get("run_id").String()
+	if runID == "" {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "run_id is required"})
+		return
+	}
+	task, err := h.harness.CancelTask(r.Context(), runID)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": task.Status == harness.TaskStatusCancelled, "run": task})
+}
+
+func (h *Handler) RetryRun(r *ghttp.Request) {
+	runID := r.Get("run_id").String()
+	if runID == "" {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "run_id is required"})
+		return
+	}
+	result := h.harness.RetryTaskRun(r.Context(), runID)
+	r.Response.WriteJson(g.Map{
+		"ok":     result.Status == harness.TaskStatusCompleted || result.Status == harness.TaskStatusPartiallyCompleted,
+		"result": result,
+	})
+}
+
+type RollbackProfileRequest struct {
+	UserID        string `json:"user_id"`
+	TargetVersion int    `json:"target_version"`
+	Reason        string `json:"reason"`
+}
+
+func (h *Handler) GetProfile(r *ghttp.Request) {
+	userID := r.GetQuery("user_id").String()
+	profile, err := h.store.ActiveUserProfileSnapshot(r.Context(), userID)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "profile": profile})
+}
+
+func (h *Handler) ListProfileHistory(r *ghttp.Request) {
+	userID := r.GetQuery("user_id").String()
+	items, err := h.store.ListUserProfileSnapshots(r.Context(), userID, queryLimit(r))
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "items": items})
+}
+
+func (h *Handler) RollbackProfile(r *ghttp.Request) {
+	var req RollbackProfileRequest
+	if !decodeJSON(r, &req) {
+		return
+	}
+	if req.TargetVersion <= 0 {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "target_version is required"})
+		return
+	}
+	profile, err := h.store.RollbackUserProfileSnapshot(r.Context(), req.UserID, req.TargetVersion, req.Reason)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "profile": profile})
+}
+
+func (h *Handler) GetRecommendationExplanation(r *ghttp.Request) {
+	postID := r.GetQuery("post_id").String()
+	if postID == "" {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "post_id is required"})
+		return
+	}
+	explanation, err := h.store.RecommendationExplanationByPostID(r.Context(), postID)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "explanation": explanation})
+}
+
+func (h *Handler) RebuildProfile(r *ghttp.Request) {
+	var req harness.RebuildProfileRequest
+	if !decodeJSON(r, &req) {
+		return
+	}
+	result := h.harness.RebuildProfile(r.Context(), req)
+	r.Response.WriteJson(g.Map{"ok": result.Status == "completed", "result": result})
 }
 
 // 函数作用：

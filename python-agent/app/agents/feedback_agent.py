@@ -63,6 +63,7 @@ class FeedbackAgent(BaseAgent):
         state["sentiment"] = output.sentiment
         # extracted_feedback 是结构化偏好信号，MemoryAgent 会用它更新画像和记忆。
         state["extracted_feedback"] = output.extracted_feedback
+        state["structured_feedback"] = output.structured_feedback
         # 如果 LLM 解析、修复或 fallback 过程中出现问题，就记录在 state 中供排查。
         if output.issues:
             state["feedback_issues"] = output.issues

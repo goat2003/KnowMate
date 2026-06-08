@@ -24,7 +24,7 @@ from app.mcp.base_client import BaseMcpClient, McpCallResult
 # EmbeddingClient 是 embedding-mcp 的专用客户端。
 # 它把通用 call_tool 包装成更清晰的业务方法。
 class EmbeddingClient(BaseMcpClient):
-    # server_name 会写入 MCP JSON-RPC endpoint 匹配和 mcp_call_logs。
+    # server_name 会用于 MCP Server 配置匹配和 mcp_call_logs。
     server_name = "embedding-mcp"
 
     # 函数作用：

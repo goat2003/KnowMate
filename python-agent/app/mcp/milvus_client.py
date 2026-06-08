@@ -77,10 +77,39 @@ class MilvusClient(BaseMcpClient):
         agent_name: str,
         run_id: str,
     ) -> McpCallResult:
-        # metadata or {} 保证 JSON-RPC payload 中 metadata 始终是对象。
+        # metadata or {} 保证 MCP payload 中 metadata 始终是对象。
         return self.call_tool(
             "insert_memory_vector",
             {"id": memory_id, "embedding": embedding, "metadata": metadata or {}},
+            agent_name=agent_name,
+            run_id=run_id,
+        )
+
+    def batch_insert_memory_vectors(
+        self,
+        items: list[JsonDict],
+        *,
+        agent_name: str,
+        run_id: str,
+    ) -> McpCallResult:
+        return self.call_tool(
+            "batch_insert_memory_vectors",
+            {"items": items},
+            agent_name=agent_name,
+            run_id=run_id,
+        )
+
+    def delete_memory_vectors(
+        self,
+        ids: list[str] | None = None,
+        metadata_filter: JsonDict | None = None,
+        *,
+        agent_name: str,
+        run_id: str,
+    ) -> McpCallResult:
+        return self.call_tool(
+            "delete_memory_vectors",
+            {"ids": ids or [], "metadata_filter": metadata_filter or {}},
             agent_name=agent_name,
             run_id=run_id,
         )
@@ -96,9 +125,21 @@ class MilvusClient(BaseMcpClient):
     #
     # 返回值：
     # - 返回 McpCallResult，FilterAgent 会读取 result["matches"] 决定是否加分。
-    def search_similar_memory(self, embedding: list[float], limit: int = 3, *, agent_name: str, run_id: str) -> McpCallResult:
+    def search_similar_memory(
+        self,
+        embedding: list[float],
+        limit: int = 3,
+        metadata_filter: JsonDict | None = None,
+        minimum_score: float | None = None,
+        *,
+        agent_name: str,
+        run_id: str,
+    ) -> McpCallResult:
         # search_similar_memory 与用户长期记忆相关，受 MCPPolicy 控制。
-        return self.call_tool("search_similar_memory", {"embedding": embedding, "limit": limit}, agent_name=agent_name, run_id=run_id)
+        payload: JsonDict = {"embedding": embedding, "limit": limit, "metadata_filter": metadata_filter or {}}
+        if minimum_score is not None:
+            payload["minimum_score"] = minimum_score
+        return self.call_tool("search_similar_memory", payload, agent_name=agent_name, run_id=run_id)
 
     # 函数作用：
     # 对候选项做语义去重。

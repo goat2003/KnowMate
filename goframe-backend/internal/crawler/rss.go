@@ -28,8 +28,6 @@ import (
 	"crypto/sha1"
 	// encoding/hex 用于把 hash 字节转换成可读字符串。
 	"encoding/hex"
-	// fmt 用于拼接去重 fallback key。
-	"fmt"
 	// strings 用于处理 mock URL、空白和字符串前缀。
 	"strings"
 
@@ -210,46 +208,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// 函数作用：
-// 按文章 ID 去重，并限制最多返回 maxItems 条。
-//
-// 参数说明：
-// - articles：待去重文章列表。
-// - maxItems：最多保留数量；小于等于 0 时不按数量截断。
-//
-// 返回值：
-// - 返回去重后的文章列表。
-//
-// 调用关系：
-// - 被 harness.RunArticles 调用，防止重复文章进入数据库和 Python Agent。
-func Deduplicate(articles []model.Article, maxItems int) []model.Article {
-	// seen 记录已经出现过的文章 ID。
-	seen := map[string]bool{}
-	// 预分配输出切片容量为输入长度，减少 append 扩容。
-	out := make([]model.Article, 0, len(articles))
-	// 按原顺序遍历文章，保留第一次出现的记录。
-	for _, article := range articles {
-		// key 默认使用文章 ID。
-		key := article.ID
-		// 如果 ID 缺失，就用 URL 和标题生成一个稳定 ID，并回填到 article.ID。
-		if key == "" {
-			key = stableArticleID(fmt.Sprintf("%s|%s", article.URL, article.Title))
-			article.ID = key
-		}
-		// 已出现过的 ID 直接跳过。
-		if seen[key] {
-			continue
-		}
-		// 标记该 ID 已出现。
-		seen[key] = true
-		// 追加到输出结果。
-		out = append(out, article)
-		// 达到 maxItems 后提前结束，避免后续处理过多文章。
-		if maxItems > 0 && len(out) >= maxItems {
-			break
-		}
-	}
-	return out
 }

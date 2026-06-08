@@ -30,19 +30,34 @@ type Article struct {
 	// ID 对应 articles.article_uid，也是 Python Agent 的 article_id。
 	ID string `json:"id"`
 	// URL 对应 articles.url，表示原文链接。
-	URL string `json:"url"`
+	URL           string `json:"url"`
+	NormalizedURL string `json:"normalized_url"`
+	URLHash       string `json:"url_hash"`
 	// Title 对应 articles.title。
-	Title string `json:"title"`
+	Title           string `json:"title"`
+	NormalizedTitle string `json:"normalized_title"`
+	TitleHash       string `json:"title_hash"`
+	RawContent      string `json:"raw_content"`
+	CleanContent    string `json:"clean_content"`
 	// Content 对应 articles.content，会作为 proto Article.raw_text 发送给 Python Agent。
-	Content string `json:"content"`
+	Content     string `json:"content"`
+	ContentHash string `json:"content_hash"`
+	Language    string `json:"language"`
 	// Author 对应 articles.author。
 	Author string `json:"author"`
 	// PublishedAt 保存 RSS 发布时间字符串。
 	PublishedAt string `json:"published_at"`
 	// Source 表示 RSS 源名称。
-	Source string `json:"source"`
+	Source     string `json:"source"`
+	SourceType string `json:"source_type"`
 	// Tags 保存文章标签，写库时会序列化为 JSON。
-	Tags []string `json:"tags"`
+	Tags           []string  `json:"tags"`
+	FetchStatus    string    `json:"fetch_status"`
+	FetchErrorType string    `json:"fetch_error_type"`
+	FetchError     string    `json:"fetch_error"`
+	HTTPStatus     int       `json:"http_status"`
+	RawPayload     any       `json:"raw_payload"`
+	FetchedAt      time.Time `json:"fetched_at"`
 	// CreatedAt 对应数据库创建时间。
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -62,6 +77,8 @@ type Post struct {
 	Status string `json:"status"`
 	// Tags 继承文章标签，写库时序列化为 JSON。
 	Tags []string `json:"tags"`
+	// Metadata 保存推荐解释、排序分数等附加信息。
+	Metadata map[string]any `json:"metadata"`
 	// CreatedAt 对应 posts.created_at。
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -87,6 +104,70 @@ type FeedbackLog struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+type FeedbackRecord struct {
+	ID                     uint64         `json:"id"`
+	RunID                  string         `json:"run_id"`
+	PostUID                string         `json:"post_uid"`
+	ArticleUID             string         `json:"article_uid"`
+	UserID                 string         `json:"user_id"`
+	FeedbackType           string         `json:"feedback_type"`
+	Rating                 int            `json:"rating"`
+	Comment                string         `json:"comment"`
+	IdempotencyKey         string         `json:"idempotency_key"`
+	RawFeedback            map[string]any `json:"raw_feedback"`
+	StructuredFeedbackJSON string         `json:"structured_feedback_json"`
+	ProcessStatus          string         `json:"process_status"`
+	ProfileVersion         int            `json:"profile_version"`
+	ErrorMessage           string         `json:"error_message"`
+	CreatedAt              time.Time      `json:"created_at"`
+}
+
+type UserProfileSnapshot struct {
+	ID                    uint64            `json:"id"`
+	UserID                string            `json:"user_id"`
+	Version               int               `json:"version"`
+	BaseVersion           int               `json:"base_version"`
+	RunID                 string            `json:"run_id"`
+	Summary               string            `json:"summary"`
+	Snapshot              map[string]string `json:"snapshot"`
+	Diff                  map[string]any    `json:"diff"`
+	ChangeReason          string            `json:"change_reason"`
+	SourceFeedbackID      uint64            `json:"source_feedback_id"`
+	IsActive              bool              `json:"is_active"`
+	RolledBackFromVersion int               `json:"rolled_back_from_version"`
+	CreatedAt             time.Time         `json:"created_at"`
+}
+
+type ProfileDiffChange struct {
+	Path   string `json:"path"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
+	Reason string `json:"reason"`
+}
+
+type ProfileDiffResult struct {
+	Before  map[string]string   `json:"before"`
+	After   map[string]string   `json:"after"`
+	Changes []ProfileDiffChange `json:"changes"`
+}
+
+type MemoryCompensationTask struct {
+	TaskID       string         `json:"task_id"`
+	RunID        string         `json:"run_id"`
+	UserID       string         `json:"user_id"`
+	TaskType     string         `json:"task_type"`
+	TargetSystem string         `json:"target_system"`
+	Payload      map[string]any `json:"payload"`
+	Status       string         `json:"status"`
+	LastError    string         `json:"last_error"`
+}
+
+type RecommendationExplanation struct {
+	PostUID    string         `json:"post_uid"`
+	ArticleUID string         `json:"article_uid"`
+	Metadata   map[string]any `json:"metadata"`
+}
+
 // RunLog 表示一次任务运行日志。
 // 文章处理和反馈处理都会写 run_logs，便于查询任务状态和步骤。
 type RunLog struct {
@@ -106,9 +187,72 @@ type RunLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TaskRun struct {
+	RunID           string         `json:"run_id"`
+	TaskType        string         `json:"task_type"`
+	UserID          string         `json:"user_id"`
+	Status          string         `json:"status"`
+	CurrentStep     string         `json:"current_step"`
+	IdempotencyKey  string         `json:"idempotency_key"`
+	InputSummary    string         `json:"input_summary"`
+	OutputSummary   string         `json:"output_summary"`
+	ErrorMessage    string         `json:"error_message"`
+	InputPayload    map[string]any `json:"input_payload"`
+	PartialResult   map[string]any `json:"partial_result"`
+	RetryCount      int            `json:"retry_count"`
+	MaxRetries      int            `json:"max_retries"`
+	TimeoutSeconds  int            `json:"timeout_seconds"`
+	CancelRequested bool           `json:"cancel_requested"`
+	LockedBy        string         `json:"locked_by"`
+	StartedAt       *time.Time     `json:"started_at"`
+	FinishedAt      *time.Time     `json:"finished_at"`
+	NextRetryAt     *time.Time     `json:"next_retry_at"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	Steps           []TaskStep     `json:"steps,omitempty"`
+}
+
+type TaskStep struct {
+	RunID         string     `json:"run_id"`
+	StepName      string     `json:"step_name"`
+	Status        string     `json:"status"`
+	StartedAt     *time.Time `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	InputSummary  string     `json:"input_summary"`
+	OutputSummary string     `json:"output_summary"`
+	ErrorMessage  string     `json:"error_message"`
+	RetryCount    int        `json:"retry_count"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type TaskRunFilter struct {
+	TaskType string `json:"task_type"`
+	UserID   string `json:"user_id"`
+	Status   string `json:"status"`
+	Limit    int    `json:"limit"`
+}
+
+type CrawlSourceRun struct {
+	RunID        string     `json:"run_id"`
+	SourceName   string     `json:"source_name"`
+	SourceType   string     `json:"source_type"`
+	Status       string     `json:"status"`
+	ErrorType    string     `json:"error_type"`
+	ErrorMessage string     `json:"error_message"`
+	HTTPStatus   int        `json:"http_status"`
+	ItemsFound   int        `json:"items_found"`
+	ItemsSaved   int        `json:"items_saved"`
+	ItemsPartial int        `json:"items_partial"`
+	ItemsFailed  int        `json:"items_failed"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+}
+
 // McpCallLog 表示一次 MCP Tool 调用日志。
 // 它对应 mcp_call_logs 表，由 Python Agent 返回，GoFrame 后端负责持久化。
 type McpCallLog struct {
+	CallID string `json:"call_id"`
 	// RunID 关联一次任务。
 	RunID string `json:"run_id"`
 	// AgentName 表示发起 MCP 调用的 Agent。

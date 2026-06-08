@@ -78,6 +78,7 @@ message McpCallLog {
   string status = 9;
   // error_message 保存失败或权限拒绝原因。
   string error_message = 10;
+  string call_id = 11;
 }
 
 // ProcessArticlesRequest 是文章处理 RPC 的请求。
@@ -91,6 +92,16 @@ message ProcessArticlesRequest {
   map<string, string> user_profile_snapshot = 3;
   // mcp_policy 是本次请求的 MCP 能力开关。
   McpPolicy mcp_policy = 4;
+}
+
+message ScoreBreakdownItem {
+  string dimension = 1;
+  bool available = 2;
+  double raw_score = 3;
+  double normalized_score = 4;
+  double weight = 5;
+  double contribution = 6;
+  repeated string evidence = 7;
 }
 
 // ArticleProcessResult 是单篇文章的处理结果。
@@ -112,6 +123,10 @@ message ArticleProcessResult {
   repeated string issues = 7;
   // mcp_call_logs 是该文章处理过程中产生的 MCP 调用日志。
   repeated McpCallLog mcp_call_logs = 8;
+  repeated ScoreBreakdownItem score_breakdown = 9;
+  repeated string recommendation_reasons = 10;
+  repeated string rejection_reasons = 11;
+  int32 rank_position = 12;
 }
 
 // ProcessArticlesResponse 是文章处理 RPC 的响应。
@@ -167,6 +182,10 @@ message ProcessFeedbackResponse {
   map<string, string> updated_profile_snapshot = 4;
   // mcp_call_logs 是反馈处理过程中产生的 MCP 调用日志。
   repeated McpCallLog mcp_call_logs = 5;
+  // structured_feedback_json 保存 FeedbackAgent 抽取出的结构化反馈 JSON。
+  string structured_feedback_json = 6;
+  // profile_diff_json 保存 MemoryAgent 生成的画像变化差异 JSON。
+  string profile_diff_json = 7;
 }
 
 // HealthCheckRequest 是健康检查请求。

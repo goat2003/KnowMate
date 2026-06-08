@@ -1,10 +1,45 @@
-rss:
+crawler:
+  user_agent: "KnowMateCrawler/1.0"
+  request_timeout_seconds: 10
+  retry_times: 3
+  retry_backoff_milliseconds: 250
+  max_retry_delay_milliseconds: 30000
+  per_host_interval_milliseconds: 500
+  max_response_bytes: 5242880
+  robots_cache_seconds: 3600
+  source_max_items: 10
+  run_max_articles: 20
   sources:
     - name: "mock-knowledge-feed"
+      type: "mock"
       url: "mock://sample"
       enabled: true
       max_items: 5
-    - name: "hacker-news-ai"
-      url: "https://hnrss.org/newest?q=AI"
+    - name: "rss-example"
+      type: "feed"
+      url: "https://example.com/rss.xml"
       enabled: false
       max_items: 5
+    - name: "atom-example"
+      type: "feed"
+      url: "https://example.com/atom.xml"
+      enabled: false
+      max_items: 5
+    - name: "arxiv-ai"
+      type: "arxiv"
+      url: "https://export.arxiv.org/api/query?search_query=cat:cs.AI"
+      enabled: false
+      max_items: 5
+    - name: "github-release"
+      type: "github_release"
+      url: "https://github.com/example/project/releases.atom"
+      enabled: false
+      max_items: 5
+    - name: "huggingface-papers"
+      type: "huggingface_papers"
+      url: "https://huggingface.co/papers/rss"
+      enabled: false
+      max_items: 5
+
+# Legacy compatibility only: when crawler.sources is absent, rss.sources is
+# converted to type=feed (or type=mock for mock:// URLs).

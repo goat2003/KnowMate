@@ -16,7 +16,7 @@
 # 关键调用关系：
 # - 被 app.grpc_server.AgentService 调用。
 # - 调用 app.agents 下的 FilterAgent、SummaryAgent、RewriteAgent、CheckAgent、FeedbackAgent、MemoryAgent。
-# - 调用 app.mcp 下的 MCP Client，通过 MockMcpTransport 或 JsonRpcMcpTransport 访问 MCP Server。
+# - 调用 app.mcp 下的统一 MCP Client，通过 memory、stdio 或 Streamable HTTP 访问 MCP Server。
 # - 调用 app.tools.build_llm_tool 创建 LLMTool，供 SummaryAgent、RewriteAgent、FeedbackAgent 使用。
 #
 # 初学者阅读建议：
@@ -25,9 +25,17 @@
 from __future__ import annotations
 
 from app.agents import CheckAgent, FeedbackAgent, FilterAgent, MemoryAgent, RewriteAgent, SummaryAgent
-from app.config import Settings
+from app.config import McpServerSettings, Settings
 from app.contracts import JsonDict, default_mcp_policy, ensure_run_id, normalize_article
-from app.mcp import EmbeddingClient, FetchClient, JsonRpcMcpTransport, MCPPolicy, MilvusClient, MockMcpTransport, Neo4jClient
+from app.mcp import (
+    EmbeddingClient,
+    FetchClient,
+    MCPPolicy,
+    MemoryMcpTransport,
+    MilvusClient,
+    Neo4jClient,
+    OfficialMcpTransport,
+)
 from app.skill_loader import load_skills
 from app.tools import build_llm_tool
 from app.workflow.state import AgentState
@@ -60,21 +68,34 @@ class ArticleWorkflow:
         # 读取 app/skills 目录下的 Markdown 技能文件。
         # 这些文本会作为提示词规则传给对应 Agent，告诉 LLM 如何总结、改写、提取反馈等。
         skills = load_skills()
-        # 根据配置决定 MCP 传输层：
-        # - mock_mcp=True 时使用 MockMcpTransport，不访问真实外部服务，适合本地测试。
-        # - mock_mcp=False 时使用 JsonRpcMcpTransport，通过 HTTP JSON-RPC 调用真实 MCP Server。
-        transport = MockMcpTransport() if settings.mock_mcp else JsonRpcMcpTransport(settings.mcp_urls)
+        # 每个 MCP Server 可独立选择 memory、stdio 或 Streamable HTTP。
+        # 启动 transport 会初始化官方 SDK 会话并缓存 tools/list 结果。
+        server_settings = settings.mcp_servers or _legacy_mcp_server_settings(settings)
+        if all(config.transport == "memory" for config in server_settings.values()):
+            transport = MemoryMcpTransport()
+        else:
+            transport = OfficialMcpTransport(server_settings, timeout_seconds=settings.mcp_timeout_seconds)
+        transport.start()
+        self.mcp_transport = transport
+        fallback_transport = MemoryMcpTransport() if settings.mcp_memory_fallback else None
+        client_options = {
+            "max_retries": settings.mcp_max_retries,
+            "retry_backoff_seconds": settings.mcp_retry_backoff_seconds,
+            "circuit_failure_threshold": settings.mcp_circuit_failure_threshold,
+            "circuit_reset_seconds": settings.mcp_circuit_reset_seconds,
+            "fallback_transport": fallback_transport,
+        }
         # MCPPolicy 负责限制“哪个 Agent 可以调用哪个 MCP Tool”。
         # 权限检查集中在 BaseMcpClient.call_tool 中执行，避免 Agent 绕过权限直接访问工具。
         mcp_policy = MCPPolicy()
         # EmbeddingClient 负责调用 embedding-mcp，将文章或反馈文本转换为向量。
-        embedding_client = EmbeddingClient(transport, policy=mcp_policy)
+        embedding_client = EmbeddingClient(transport, policy=mcp_policy, **client_options)
         # FetchClient 负责调用 fetch-mcp，在文章缺少正文时尝试按 URL 获取网页内容。
-        fetch_client = FetchClient(transport, policy=mcp_policy)
+        fetch_client = FetchClient(transport, policy=mcp_policy, **client_options)
         # MilvusClient 负责调用 milvus-mcp，做向量检索、相似记忆查询和去重。
-        milvus_client = MilvusClient(transport, policy=mcp_policy)
+        milvus_client = MilvusClient(transport, policy=mcp_policy, **client_options)
         # Neo4jClient 负责调用 neo4j-mcp，读取或更新用户兴趣图谱。
-        neo4j_client = Neo4jClient(transport, policy=mcp_policy)
+        neo4j_client = Neo4jClient(transport, policy=mcp_policy, **client_options)
         # build_llm_tool 根据 settings.llm 选择 mock/openai/claude provider。
         # SummaryAgent、RewriteAgent、FeedbackAgent 都通过同一个 LLMTool 发起结构化 LLM 调用。
         llm_tool = build_llm_tool(settings)
@@ -86,12 +107,12 @@ class ArticleWorkflow:
         self.filter_agent = FilterAgent(
             skills.get("filter_skill", ""),
             embedding_client=embedding_client,
-            fetch_client=fetch_client,
             milvus_client=milvus_client,
             neo4j_client=neo4j_client,
+            recommendation_settings=settings.recommendation,
         )
         # SummaryAgent 调用 LLMTool，把保留下来的文章压缩成中文知识摘要。
-        self.summary_agent = SummaryAgent(skills.get("summary_skill", ""), llm_tool=llm_tool)
+        self.summary_agent = SummaryAgent(skills.get("summary_skill", ""), llm_tool=llm_tool, fetch_client=fetch_client)
         # RewriteAgent 调用 LLMTool，把摘要改写成适合发布或保存的推文/知识笔记文本。
         self.rewrite_agent = RewriteAgent(skills.get("rewrite_post_skill", ""), llm_tool=llm_tool)
         # CheckAgent 不调用 LLM，只做结果完整性校验，例如是否有摘要、推文和 URL。
@@ -102,6 +123,7 @@ class ArticleWorkflow:
         self.memory_agent = MemoryAgent(
             skills.get("memory_update_skill", ""),
             embedding_client=embedding_client,
+            milvus_client=milvus_client,
             neo4j_client=neo4j_client,
         )
         # 尝试构建文章处理 LangGraph。
@@ -159,6 +181,10 @@ class ArticleWorkflow:
                     "issues": list(item.get("issues", [])),
                     # mcp_call_logs 记录每次 MCP 工具调用的请求、响应、耗时和状态，用于写入 mcp_call_logs 表。
                     "mcp_call_logs": list(item.get("mcp_call_logs", [])),
+                    "rank_position": int(item.get("rank_position", 0)),
+                    "score_breakdown": list(item.get("score_breakdown", [])),
+                    "recommendation_reasons": list(item.get("recommendation_reasons", [])),
+                    "rejection_reasons": list(item.get("rejection_reasons", [])),
                 }
                 for item in result.get("article_results", [])
             ],
@@ -197,6 +223,8 @@ class ArticleWorkflow:
             "run_id": result["run_id"],
             "sentiment": result.get("sentiment", "neutral"),
             "extracted_feedback": result.get("extracted_feedback", []),
+            "structured_feedback": result.get("structured_feedback", {}),
+            "profile_diff": result.get("profile_diff", {}),
             "updated_profile_snapshot": result.get("updated_profile_snapshot", {}),
             "mcp_call_logs": result.get("mcp_call_logs", []),
         }
@@ -211,6 +239,9 @@ class ArticleWorkflow:
     # - 返回字符串列表，每个值对应一个 Agent 的短名称。
     def enabled_agents(self) -> list[str]:
         return ["filter", "summary", "rewrite", "check", "feedback", "memory"]
+
+    def close(self) -> None:
+        self.mcp_transport.close()
 
     # 函数作用：
     # 在 LangGraph 不可用时顺序执行文章处理 Agent。
@@ -288,7 +319,6 @@ class ArticleWorkflow:
         # END 表示图流程结束，compile 会生成可执行对象。
         graph.add_edge("check", END)
         return graph.compile()
-
     # 函数作用：
     # 尝试构建反馈处理 LangGraph，将反馈提取和记忆更新连接成图。
     #
@@ -316,3 +346,16 @@ class ArticleWorkflow:
         # memory 完成后流程结束，结果会包含 updated_profile_snapshot。
         graph.add_edge("memory", END)
         return graph.compile()
+
+
+def _legacy_mcp_server_settings(settings: Settings) -> dict[str, McpServerSettings]:
+    if settings.mock_mcp:
+        return {
+            name: McpServerSettings(transport="memory")
+            for name in ["embedding-mcp", "fetch-mcp", "milvus-mcp", "neo4j-mcp"]
+        }
+    servers: dict[str, McpServerSettings] = {}
+    for name, url in settings.mcp_urls.items():
+        server_name = name if name.endswith("-mcp") else f"{name}-mcp"
+        servers[server_name] = McpServerSettings(transport="streamable_http", url=url)
+    return servers

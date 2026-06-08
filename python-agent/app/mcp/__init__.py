@@ -12,12 +12,19 @@
 #
 # 初学者阅读建议：
 # 这里没有业务逻辑；如果要理解 MCP 调用过程，请优先阅读 base_client.py 和 policy.py。
-from .base_client import BaseMcpClient, JsonRpcMcpTransport, McpCallResult, MockMcpTransport
+from .base_client import (
+    BaseMcpClient,
+    McpCallResult,
+    McpToolDefinition,
+    MemoryMcpTransport,
+    MockMcpTransport,
+)
 from .embedding_client import EmbeddingClient
 from .fetch_client import FetchClient
 from .milvus_client import MilvusClient
 from .neo4j_client import Neo4jClient
 from .policy import DEFAULT_AGENT_TOOL_PERMISSIONS, MCPPolicy
+from .sdk_transport import OfficialMcpTransport
 
 # __all__ 声明包对外公开的符号。
 # 这样 ArticleWorkflow 可以写 from app.mcp import EmbeddingClient，而不需要知道具体文件路径。
@@ -25,11 +32,13 @@ __all__ = [
     "BaseMcpClient",
     "EmbeddingClient",
     "FetchClient",
-    "JsonRpcMcpTransport",
     "McpCallResult",
+    "McpToolDefinition",
     "MilvusClient",
+    "MemoryMcpTransport",
     "MockMcpTransport",
     "Neo4jClient",
+    "OfficialMcpTransport",
     "MCPPolicy",
     "DEFAULT_AGENT_TOOL_PERMISSIONS",
 ]

@@ -23,6 +23,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"fmt"
 	// context.Context 用于给数据库调用传递取消和超时。
 	"context"
 	// database/sql 是 Go 标准库数据库接口。
@@ -33,6 +35,7 @@ import (
 	"errors"
 	// os 用于读取初始化 SQL 文件。
 	"os"
+	"sort"
 	// strings 用于拆分 SQL、处理 JSON 字符串和判断空白。
 	"strings"
 	// time 用于生成默认 ID 和配置连接生命周期。
@@ -141,9 +144,19 @@ func (s *Store) InsertArticle(ctx context.Context, article model.Article) (bool,
 		article.ID = "manual-" + time.Now().UTC().Format("20060102150405")
 	}
 	// Tags 写入 JSON 列/文本列，便于保留多标签结构。
-	tags, _ := json.Marshal(article.Tags)
+	tags, err := json.Marshal(article.Tags)
+	if err != nil {
+		return false, err
+	}
+	rawPayload, err := json.Marshal(article.RawPayload)
+	if err != nil {
+		return false, err
+	}
 	// raw_json 保存完整 Article，便于后续排查抓取原始数据。
-	raw, _ := json.Marshal(article)
+	raw, err := json.Marshal(article)
+	if err != nil {
+		return false, err
+	}
 	// 获取数据库连接。
 	db, err := s.open(ctx)
 	if err != nil {
@@ -152,16 +165,35 @@ func (s *Store) InsertArticle(ctx context.Context, article model.Article) (bool,
 	// INSERT IGNORE 避免重复 article_uid 导致任务失败。
 	result, err := db.ExecContext(
 		ctx,
-		`INSERT IGNORE INTO articles (article_uid, source, url, title, content, author, tags, raw_json)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT IGNORE INTO articles (
+		 article_uid, source, source_type, url, normalized_url, url_hash, title, normalized_title, title_hash,
+		 content, raw_content, clean_content, content_hash, language, author, published_at, tags,
+		 fetch_status, fetch_error_type, fetch_error, http_status, raw_payload, raw_json, fetched_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		article.ID,
 		article.Source,
+		article.SourceType,
 		article.URL,
+		nullableString(article.NormalizedURL),
+		nullableString(article.URLHash),
 		article.Title,
+		article.NormalizedTitle,
+		nullableString(article.TitleHash),
 		article.Content,
+		article.RawContent,
+		article.CleanContent,
+		nullableString(article.ContentHash),
+		article.Language,
 		article.Author,
+		nullableTimeString(article.PublishedAt),
 		string(tags),
+		article.FetchStatus,
+		article.FetchErrorType,
+		nullableString(article.FetchError),
+		nullableInt(article.HTTPStatus),
+		string(rawPayload),
 		string(raw),
+		nullableTime(article.FetchedAt),
 	)
 	if err != nil {
 		return false, err
@@ -169,6 +201,44 @@ func (s *Store) InsertArticle(ctx context.Context, article model.Article) (bool,
 	// RowsAffected 为 1 表示新插入；为 0 表示被 IGNORE 的重复记录。
 	rows, _ := result.RowsAffected()
 	return rows > 0, nil
+}
+
+func (s *Store) UpsertCrawlSourceRun(ctx context.Context, run model.CrawlSourceRun) error {
+	if run.Status == "" {
+		run.Status = "running"
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = time.Now().UTC()
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT INTO crawl_source_runs (
+		 run_id, source_name, source_type, status, error_type, error_message, http_status,
+		 items_found, items_saved, items_partial, items_failed, started_at, finished_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE source_type = VALUES(source_type), status = VALUES(status),
+		 error_type = VALUES(error_type), error_message = VALUES(error_message), http_status = VALUES(http_status),
+		 items_found = VALUES(items_found), items_saved = VALUES(items_saved), items_partial = VALUES(items_partial),
+		 items_failed = VALUES(items_failed), finished_at = VALUES(finished_at), updated_at = CURRENT_TIMESTAMP`,
+		run.RunID,
+		run.SourceName,
+		run.SourceType,
+		run.Status,
+		run.ErrorType,
+		nullableString(run.ErrorMessage),
+		nullableInt(run.HTTPStatus),
+		run.ItemsFound,
+		run.ItemsSaved,
+		run.ItemsPartial,
+		run.ItemsFailed,
+		run.StartedAt,
+		run.FinishedAt,
+	)
+	return err
 }
 
 // 函数作用：
@@ -191,6 +261,7 @@ func (s *Store) InsertPost(ctx context.Context, post model.Post) error {
 	}
 	// tags 序列化成 JSON 字符串。
 	tags, _ := json.Marshal(post.Tags)
+	metadata, _ := json.Marshal(post.Metadata)
 	// 获取数据库连接。
 	db, err := s.open(ctx)
 	if err != nil {
@@ -199,17 +270,32 @@ func (s *Store) InsertPost(ctx context.Context, post model.Post) error {
 	// ON DUPLICATE KEY UPDATE 让同一个 post_uid 的重跑结果可覆盖旧内容。
 	_, err = db.ExecContext(
 		ctx,
-		`INSERT INTO posts (post_uid, article_uid, title, markdown, status, tags)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE title = VALUES(title), markdown = VALUES(markdown), status = VALUES(status), tags = VALUES(tags), updated_at = CURRENT_TIMESTAMP`,
+		`INSERT INTO posts (post_uid, article_uid, title, markdown, status, tags, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE title = VALUES(title), markdown = VALUES(markdown), status = VALUES(status),
+		 tags = VALUES(tags), metadata = VALUES(metadata), updated_at = CURRENT_TIMESTAMP`,
 		post.PostUID,
 		post.ArticleUID,
 		post.Title,
 		post.Markdown,
 		post.Status,
 		string(tags),
+		string(metadata),
 	)
 	return err
+}
+
+func (s *Store) ArticleHasPost(ctx context.Context, articleUID string) (bool, error) {
+	if strings.TrimSpace(articleUID) == "" {
+		return false, nil
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return false, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE article_uid = ? LIMIT 1`, articleUID).Scan(&count)
+	return count > 0, err
 }
 
 // 函数作用：
@@ -234,7 +320,8 @@ func (s *Store) ListPosts(ctx context.Context, limit int) ([]model.Post, error) 
 	// 查询 posts 表，COALESCE 确保 tags 为空时返回 []。
 	rows, err := db.QueryContext(
 		ctx,
-		`SELECT post_uid, article_uid, title, markdown, status, COALESCE(CAST(tags AS CHAR), '[]'), created_at
+		`SELECT post_uid, article_uid, title, markdown, status,
+		        COALESCE(CAST(tags AS CHAR), '[]'), COALESCE(CAST(metadata AS CHAR), '{}'), created_at
 		 FROM posts ORDER BY id DESC LIMIT ?`,
 		limit,
 	)
@@ -250,16 +337,41 @@ func (s *Store) ListPosts(ctx context.Context, limit int) ([]model.Post, error) 
 	for rows.Next() {
 		var post model.Post
 		var tagsRaw string
+		var metadataRaw string
 		// Scan 按 SELECT 字段顺序填充结构体。
-		if err := rows.Scan(&post.PostUID, &post.ArticleUID, &post.Title, &post.Markdown, &post.Status, &tagsRaw, &post.CreatedAt); err != nil {
+		if err := rows.Scan(&post.PostUID, &post.ArticleUID, &post.Title, &post.Markdown, &post.Status, &tagsRaw, &metadataRaw, &post.CreatedAt); err != nil {
 			return nil, err
 		}
 		// tagsRaw 是 JSON 字符串，解析失败时保留 Tags 为空，不中断查询。
 		_ = json.Unmarshal([]byte(tagsRaw), &post.Tags)
+		_ = json.Unmarshal([]byte(metadataRaw), &post.Metadata)
 		posts = append(posts, post)
 	}
 	// rows.Err 捕获遍历期间的延迟错误。
 	return posts, rows.Err()
+}
+
+func (s *Store) RecommendationExplanationByPostID(ctx context.Context, postID string) (model.RecommendationExplanation, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.RecommendationExplanation{}, err
+	}
+	var explanation model.RecommendationExplanation
+	var metadataRaw string
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT post_uid, article_uid, COALESCE(CAST(metadata AS CHAR), '{}')
+		   FROM posts
+		  WHERE post_uid = ?
+		  LIMIT 1`,
+		postID,
+	).Scan(&explanation.PostUID, &explanation.ArticleUID, &metadataRaw)
+	if err != nil {
+		return model.RecommendationExplanation{}, err
+	}
+	explanation.Metadata = map[string]any{}
+	_ = json.Unmarshal([]byte(metadataRaw), &explanation.Metadata)
+	return explanation, nil
 }
 
 // 函数作用：
@@ -274,6 +386,25 @@ func (s *Store) ListPosts(ctx context.Context, limit int) ([]model.Post, error) 
 func (s *Store) InsertFeedbackLog(ctx context.Context, feedback model.FeedbackLog) error {
 	// Metadata 序列化成 JSON 字符串。
 	metadata, _ := json.Marshal(feedback.Metadata)
+	idempotencyKey := FeedbackIdempotencyKey(
+		feedback.UserID,
+		feedback.PostUID,
+		feedback.ArticleUID,
+		feedback.FeedbackType,
+		feedback.Rating,
+		feedback.Comment,
+	)
+	rawFeedback := map[string]any{
+		"run_id":        feedback.RunID,
+		"post_uid":      feedback.PostUID,
+		"article_uid":   feedback.ArticleUID,
+		"user_id":       feedback.UserID,
+		"feedback_type": feedback.FeedbackType,
+		"rating":        feedback.Rating,
+		"comment":       feedback.Comment,
+		"metadata":      feedback.Metadata,
+	}
+	rawJSON, _ := json.Marshal(rawFeedback)
 	// 获取数据库连接。
 	db, err := s.open(ctx)
 	if err != nil {
@@ -282,8 +413,13 @@ func (s *Store) InsertFeedbackLog(ctx context.Context, feedback model.FeedbackLo
 	// feedback_logs 保存原始反馈，ProcessFeedback 后续会基于它更新用户画像。
 	_, err = db.ExecContext(
 		ctx,
-		`INSERT INTO feedback_logs (run_id, post_uid, article_uid, user_id, feedback_type, rating, comment, metadata)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO feedback_logs (
+		 run_id, post_uid, article_uid, user_id, feedback_type, rating, comment, metadata,
+		 idempotency_key, raw_feedback_json, process_status
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received')
+		 ON DUPLICATE KEY UPDATE post_uid = VALUES(post_uid), article_uid = VALUES(article_uid),
+		 user_id = VALUES(user_id), feedback_type = VALUES(feedback_type), rating = VALUES(rating),
+		 comment = VALUES(comment), metadata = VALUES(metadata), raw_feedback_json = VALUES(raw_feedback_json)`,
 		feedback.RunID,
 		feedback.PostUID,
 		feedback.ArticleUID,
@@ -292,7 +428,178 @@ func (s *Store) InsertFeedbackLog(ctx context.Context, feedback model.FeedbackLo
 		feedback.Rating,
 		feedback.Comment,
 		string(metadata),
+		idempotencyKey,
+		string(rawJSON),
 	)
+	return err
+}
+
+func (s *Store) UpsertFeedbackReceived(ctx context.Context, feedback model.FeedbackLog, idempotencyKey string, raw map[string]any) (model.FeedbackRecord, bool, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = FeedbackIdempotencyKey(
+			feedback.UserID,
+			feedback.PostUID,
+			feedback.ArticleUID,
+			feedback.FeedbackType,
+			feedback.Rating,
+			feedback.Comment,
+		)
+	}
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.FeedbackRecord{}, false, err
+	}
+	if existing, err := s.feedbackRecordByIdempotency(ctx, db, feedback.UserID, idempotencyKey); err == nil {
+		return existing, false, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return model.FeedbackRecord{}, false, err
+	}
+	metadata, _ := json.Marshal(feedback.Metadata)
+	rawJSON, _ := json.Marshal(raw)
+	result, err := db.ExecContext(
+		ctx,
+		`INSERT INTO feedback_logs (
+		 run_id, post_uid, article_uid, user_id, feedback_type, rating, comment, metadata,
+		 idempotency_key, raw_feedback_json, process_status
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received')
+		 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+		feedback.RunID,
+		feedback.PostUID,
+		feedback.ArticleUID,
+		feedback.UserID,
+		feedback.FeedbackType,
+		feedback.Rating,
+		feedback.Comment,
+		string(metadata),
+		idempotencyKey,
+		string(rawJSON),
+	)
+	if err != nil {
+		return model.FeedbackRecord{}, false, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.FeedbackRecord{}, false, err
+	}
+	rows, _ := result.RowsAffected()
+	record, err := s.feedbackRecordByID(ctx, db, uint64(id))
+	return record, rows == 1, err
+}
+
+func (s *Store) MarkFeedbackProcessing(ctx context.Context, id uint64) error {
+	return s.updateFeedbackStatus(ctx, id, "processing", "", 0, "")
+}
+
+func (s *Store) MarkFeedbackCompleted(ctx context.Context, id uint64, structuredJSON string, profileVersion int) error {
+	return s.updateFeedbackStatus(ctx, id, "completed", structuredJSON, profileVersion, "")
+}
+
+func (s *Store) MarkFeedbackFailed(ctx context.Context, id uint64, message string) error {
+	return s.updateFeedbackStatus(ctx, id, "failed", "", 0, message)
+}
+
+func (s *Store) ListCompletedStructuredFeedback(ctx context.Context, userID string) ([]model.FeedbackRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT id, run_id, post_uid, article_uid, user_id, feedback_type, COALESCE(rating, 0),
+		        COALESCE(comment, ''), idempotency_key, COALESCE(CAST(raw_feedback_json AS CHAR), '{}'),
+		        COALESCE(CAST(structured_feedback_json AS CHAR), ''), process_status,
+		        COALESCE(profile_version, 0), COALESCE(error_message, ''), created_at
+		   FROM feedback_logs
+		  WHERE user_id = ?
+		    AND process_status = 'completed'
+		    AND structured_feedback_json IS NOT NULL
+		    AND COALESCE(CAST(structured_feedback_json AS CHAR), '{}') <> '{}'
+		  ORDER BY id ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]model.FeedbackRecord, 0)
+	for rows.Next() {
+		record, err := scanFeedbackRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (s *Store) feedbackRecordByIdempotency(ctx context.Context, db *sql.DB, userID string, idempotencyKey string) (model.FeedbackRecord, error) {
+	return scanFeedbackRecord(db.QueryRowContext(
+		ctx,
+		`SELECT id, run_id, post_uid, article_uid, user_id, feedback_type, COALESCE(rating, 0),
+		        COALESCE(comment, ''), idempotency_key, COALESCE(CAST(raw_feedback_json AS CHAR), '{}'),
+		        COALESCE(CAST(structured_feedback_json AS CHAR), ''), process_status,
+		        COALESCE(profile_version, 0), COALESCE(error_message, ''), created_at
+		   FROM feedback_logs
+		  WHERE user_id = ? AND idempotency_key = ?
+		  LIMIT 1`,
+		userID,
+		idempotencyKey,
+	))
+}
+
+func (s *Store) feedbackRecordByID(ctx context.Context, db *sql.DB, id uint64) (model.FeedbackRecord, error) {
+	return scanFeedbackRecord(db.QueryRowContext(
+		ctx,
+		`SELECT id, run_id, post_uid, article_uid, user_id, feedback_type, COALESCE(rating, 0),
+		        COALESCE(comment, ''), idempotency_key, COALESCE(CAST(raw_feedback_json AS CHAR), '{}'),
+		        COALESCE(CAST(structured_feedback_json AS CHAR), ''), process_status,
+		        COALESCE(profile_version, 0), COALESCE(error_message, ''), created_at
+		   FROM feedback_logs
+		  WHERE id = ?
+		  LIMIT 1`,
+		id,
+	))
+}
+
+func (s *Store) updateFeedbackStatus(ctx context.Context, id uint64, status string, structuredJSON string, profileVersion int, message string) error {
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case "processing":
+		_, err = db.ExecContext(ctx, `UPDATE feedback_logs SET process_status = 'processing' WHERE id = ?`, id)
+	case "completed":
+		_, err = db.ExecContext(
+			ctx,
+			`UPDATE feedback_logs
+			    SET process_status = 'completed',
+			        structured_feedback_json = ?,
+			        profile_version = ?,
+			        error_message = NULL,
+			        processed_at = NOW()
+			  WHERE id = ?`,
+			normalizeJSON(structuredJSON),
+			profileVersion,
+			id,
+		)
+	case "failed":
+		_, err = db.ExecContext(
+			ctx,
+			`UPDATE feedback_logs
+			    SET process_status = 'failed',
+			        error_message = ?,
+			        processed_at = NOW()
+			  WHERE id = ?`,
+			message,
+			id,
+		)
+	default:
+		err = fmt.Errorf("unknown feedback status %q", status)
+	}
 	return err
 }
 
@@ -388,6 +695,334 @@ func (s *Store) ListRunLogs(ctx context.Context, limit int) ([]model.RunLog, err
 	return logs, rows.Err()
 }
 
+func (s *Store) CreateTaskRun(ctx context.Context, task model.TaskRun) (model.TaskRun, error) {
+	if task.RunID == "" {
+		return model.TaskRun{}, errors.New("run_id is required")
+	}
+	if task.Status == "" {
+		task.Status = "pending"
+	}
+	inputPayload, _ := json.Marshal(nonNilMap(task.InputPayload))
+	partialResult, _ := json.Marshal(nonNilMap(task.PartialResult))
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.TaskRun{}, err
+	}
+	if task.UserID != "" && task.TaskType != "" {
+		existing, err := scanTaskRun(db.QueryRowContext(
+			ctx,
+			`SELECT run_id, task_type, user_id, status, current_step, idempotency_key,
+			        input_summary, output_summary, COALESCE(error_message, ''),
+			        COALESCE(CAST(input_payload_json AS CHAR), '{}'),
+			        COALESCE(CAST(partial_result_json AS CHAR), '{}'),
+			        retry_count, max_retries, timeout_seconds, cancel_requested, locked_by,
+			        started_at, finished_at, next_retry_at, created_at, updated_at
+			   FROM task_runs
+			  WHERE task_type = ? AND user_id = ?
+			    AND status IN ('pending', 'running')
+			  ORDER BY id DESC
+			  LIMIT 1`,
+			task.TaskType,
+			task.UserID,
+		))
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return model.TaskRun{}, err
+		}
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT INTO task_runs (
+		 run_id, task_type, user_id, status, current_step, idempotency_key,
+		 input_summary, output_summary, error_message, input_payload_json, partial_result_json,
+		 retry_count, max_retries, timeout_seconds, cancel_requested, locked_by
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE run_id = run_id`,
+		task.RunID,
+		task.TaskType,
+		task.UserID,
+		task.Status,
+		task.CurrentStep,
+		task.IdempotencyKey,
+		task.InputSummary,
+		task.OutputSummary,
+		task.ErrorMessage,
+		string(inputPayload),
+		string(partialResult),
+		task.RetryCount,
+		task.MaxRetries,
+		task.TimeoutSeconds,
+		task.CancelRequested,
+		task.LockedBy,
+	)
+	if err != nil {
+		return model.TaskRun{}, err
+	}
+	return s.TaskRun(ctx, task.RunID)
+}
+
+func (s *Store) UpdateTaskRun(ctx context.Context, task model.TaskRun) error {
+	if task.RunID == "" {
+		return errors.New("run_id is required")
+	}
+	inputPayload, _ := json.Marshal(nonNilMap(task.InputPayload))
+	partialResult, _ := json.Marshal(nonNilMap(task.PartialResult))
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`UPDATE task_runs
+		    SET status = IF(? = '', status, ?),
+		        current_step = IF(? = '', current_step, ?),
+		        output_summary = IF(? = '', output_summary, ?),
+		        error_message = IF(? = '', error_message, ?),
+		        input_payload_json = IF(? = '{}', input_payload_json, ?),
+		        partial_result_json = IF(? = '{}', partial_result_json, ?),
+		        retry_count = IF(? = 0, retry_count, ?),
+		        max_retries = IF(? = 0, max_retries, ?),
+		        timeout_seconds = IF(? = 0, timeout_seconds, ?),
+		        cancel_requested = IF(? = TRUE, TRUE, cancel_requested),
+		        locked_by = IF(? = '', locked_by, ?),
+		        started_at = COALESCE(?, started_at),
+		        finished_at = COALESCE(?, finished_at),
+		        next_retry_at = COALESCE(?, next_retry_at),
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE run_id = ?`,
+		task.Status, task.Status,
+		task.CurrentStep, task.CurrentStep,
+		task.OutputSummary, task.OutputSummary,
+		task.ErrorMessage, task.ErrorMessage,
+		string(inputPayload), string(inputPayload),
+		string(partialResult), string(partialResult),
+		task.RetryCount, task.RetryCount,
+		task.MaxRetries, task.MaxRetries,
+		task.TimeoutSeconds, task.TimeoutSeconds,
+		task.CancelRequested,
+		task.LockedBy, task.LockedBy,
+		task.StartedAt,
+		task.FinishedAt,
+		task.NextRetryAt,
+		task.RunID,
+	)
+	return err
+}
+
+func (s *Store) MarkTaskRunStatus(ctx context.Context, runID string, status string, errorMessage string, partial map[string]any) error {
+	if runID == "" {
+		return errors.New("run_id is required")
+	}
+	finishedAt := time.Now().UTC()
+	partialResult, _ := json.Marshal(nonNilMap(partial))
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`UPDATE task_runs
+		    SET status = ?,
+		        error_message = ?,
+		        partial_result_json = ?,
+		        cancel_requested = IF(? = 'cancelled', TRUE, cancel_requested),
+		        locked_by = '',
+		        finished_at = ?,
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE run_id = ?`,
+		status,
+		errorMessage,
+		string(partialResult),
+		status,
+		finishedAt,
+		runID,
+	)
+	return err
+}
+
+func (s *Store) UpsertTaskStep(ctx context.Context, step model.TaskStep) error {
+	if step.RunID == "" || step.StepName == "" {
+		return nil
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT INTO task_steps (
+		 run_id, step_name, status, started_at, completed_at,
+		 input_summary, output_summary, error_message, retry_count
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE status = VALUES(status), started_at = COALESCE(task_steps.started_at, VALUES(started_at)),
+		 completed_at = VALUES(completed_at), input_summary = IF(VALUES(input_summary) = '', task_steps.input_summary, VALUES(input_summary)),
+		 output_summary = VALUES(output_summary), error_message = VALUES(error_message), retry_count = VALUES(retry_count),
+		 updated_at = CURRENT_TIMESTAMP`,
+		step.RunID,
+		step.StepName,
+		step.Status,
+		step.StartedAt,
+		step.CompletedAt,
+		step.InputSummary,
+		step.OutputSummary,
+		step.ErrorMessage,
+		step.RetryCount,
+	)
+	return err
+}
+
+func (s *Store) TaskRun(ctx context.Context, runID string) (model.TaskRun, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.TaskRun{}, err
+	}
+	return scanTaskRun(db.QueryRowContext(
+		ctx,
+		`SELECT run_id, task_type, user_id, status, current_step, idempotency_key,
+		        input_summary, output_summary, COALESCE(error_message, ''),
+		        COALESCE(CAST(input_payload_json AS CHAR), '{}'),
+		        COALESCE(CAST(partial_result_json AS CHAR), '{}'),
+		        retry_count, max_retries, timeout_seconds, cancel_requested, locked_by,
+		        started_at, finished_at, next_retry_at, created_at, updated_at
+		   FROM task_runs
+		  WHERE run_id = ?
+		  LIMIT 1`,
+		runID,
+	))
+}
+
+func (s *Store) ListTaskRuns(ctx context.Context, filter model.TaskRunFilter) ([]model.TaskRun, error) {
+	if filter.Limit <= 0 || filter.Limit > 100 {
+		filter.Limit = 20
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conditions := []string{"1 = 1"}
+	args := []any{}
+	if filter.TaskType != "" {
+		conditions = append(conditions, "task_type = ?")
+		args = append(args, filter.TaskType)
+	}
+	if filter.UserID != "" {
+		conditions = append(conditions, "user_id = ?")
+		args = append(args, filter.UserID)
+	}
+	if filter.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, filter.Status)
+	}
+	args = append(args, filter.Limit)
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT run_id, task_type, user_id, status, current_step, idempotency_key,
+		        input_summary, output_summary, COALESCE(error_message, ''),
+		        COALESCE(CAST(input_payload_json AS CHAR), '{}'),
+		        COALESCE(CAST(partial_result_json AS CHAR), '{}'),
+		        retry_count, max_retries, timeout_seconds, cancel_requested, locked_by,
+		        started_at, finished_at, next_retry_at, created_at, updated_at
+		   FROM task_runs
+		  WHERE `+strings.Join(conditions, " AND ")+`
+		  ORDER BY id DESC
+		  LIMIT ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.TaskRun, 0)
+	for rows.Next() {
+		item, err := scanTaskRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListTaskSteps(ctx context.Context, runID string) ([]model.TaskStep, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT run_id, step_name, status, started_at, completed_at,
+		        input_summary, output_summary, COALESCE(error_message, ''), retry_count, created_at, updated_at
+		   FROM task_steps
+		  WHERE run_id = ?
+		  ORDER BY id ASC`,
+		runID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.TaskStep, 0)
+	for rows.Next() {
+		item, err := scanTaskStep(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) RecoverInterruptedTaskRuns(ctx context.Context, lockedBy string) ([]model.TaskRun, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	_, err = db.ExecContext(
+		ctx,
+		`UPDATE task_runs
+		    SET status = 'pending',
+		        locked_by = '',
+		        next_retry_at = ?,
+		        error_message = IF(error_message = '', 'recovered after service restart', error_message),
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE status IN ('running', 'pending')
+		    AND cancel_requested = FALSE`,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.ListTaskRuns(ctx, model.TaskRunFilter{Status: "pending", Limit: 100})
+}
+
+func (s *Store) RequestTaskCancellation(ctx context.Context, runID string) (model.TaskRun, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.TaskRun{}, err
+	}
+	finishedAt := time.Now().UTC()
+	_, err = db.ExecContext(
+		ctx,
+		`UPDATE task_runs
+		    SET cancel_requested = TRUE,
+		        status = IF(status IN ('pending', 'running'), 'cancelled', status),
+		        error_message = IF(error_message = '', 'task cancellation requested', error_message),
+		        locked_by = '',
+		        finished_at = IF(status IN ('pending', 'running'), ?, finished_at),
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE run_id = ?`,
+		finishedAt,
+		runID,
+	)
+	if err != nil {
+		return model.TaskRun{}, err
+	}
+	return s.TaskRun(ctx, runID)
+}
+
 // 函数作用：
 // 写入用户画像快照到 user_profile_snapshot 表。
 //
@@ -400,21 +1035,13 @@ func (s *Store) ListRunLogs(ctx context.Context, limit int) ([]model.RunLog, err
 // 返回值：
 // - 成功返回 nil，失败返回 error。
 func (s *Store) InsertUserProfileSnapshot(ctx context.Context, userID string, snapshot map[string]string, summary string) error {
-	// snapshot_json 保存完整画像快照，Python Agent 返回 map<string,string>。
-	raw, _ := json.Marshal(snapshot)
-	db, err := s.open(ctx)
-	if err != nil {
-		return err
-	}
-	// 每次反馈更新都插入一条新快照，LatestUserProfileSnapshot 按 id DESC 读取最新版本。
-	_, err = db.ExecContext(
-		ctx,
-		`INSERT INTO user_profile_snapshot (user_id, summary, snapshot_json)
-		 VALUES (?, ?, ?)`,
-		userID,
-		summary,
-		string(raw),
-	)
+	_, err := s.InsertUserProfileSnapshotVersion(ctx, model.UserProfileSnapshot{
+		UserID:       userID,
+		Summary:      summary,
+		Snapshot:     snapshot,
+		Diff:         map[string]any{},
+		ChangeReason: "compat_insert",
+	})
 	return err
 }
 
@@ -431,33 +1058,222 @@ func (s *Store) InsertUserProfileSnapshot(ctx context.Context, userID string, sn
 // 调用关系：
 // - harness.loadProfile 调用它，再补齐默认 user_id 和 interests。
 func (s *Store) LatestUserProfileSnapshot(ctx context.Context, userID string) (map[string]string, error) {
-	// 获取数据库连接。
-	db, err := s.open(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// raw 保存 snapshot_json 的字符串形式。
-	var raw string
-	// 按 id 倒序取最新一条快照。
-	err = db.QueryRowContext(
-		ctx,
-		`SELECT COALESCE(CAST(snapshot_json AS CHAR), '{}')
-		 FROM user_profile_snapshot WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-		userID,
-	).Scan(&raw)
-	// 没有快照不是错误，业务层会使用默认画像。
+	snapshot, err := s.ActiveUserProfileSnapshot(ctx, userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return map[string]string{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	// 解析 JSON 快照到 map。
-	snapshot := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+	return snapshot.Snapshot, nil
+}
+
+func (s *Store) ActiveUserProfileSnapshot(ctx context.Context, userID string) (model.UserProfileSnapshot, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	return scanUserProfileSnapshot(db.QueryRowContext(
+		ctx,
+		`SELECT id, user_id, version, COALESCE(base_version, 0), run_id, COALESCE(summary, ''),
+		        COALESCE(CAST(snapshot_json AS CHAR), '{}'), COALESCE(CAST(diff_json AS CHAR), '{}'),
+		        change_reason, COALESCE(source_feedback_id, 0), is_active,
+		        COALESCE(rolled_back_from_version, 0), created_at
+		   FROM user_profile_snapshot
+		  WHERE user_id = ?
+		  ORDER BY is_active DESC, version DESC, id DESC
+		  LIMIT 1`,
+		userID,
+	))
+}
+
+func (s *Store) ListUserProfileSnapshots(ctx context.Context, userID string, limit int) ([]model.UserProfileSnapshot, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	db, err := s.open(ctx)
+	if err != nil {
 		return nil, err
 	}
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT id, user_id, version, COALESCE(base_version, 0), run_id, COALESCE(summary, ''),
+		        COALESCE(CAST(snapshot_json AS CHAR), '{}'), COALESCE(CAST(diff_json AS CHAR), '{}'),
+		        change_reason, COALESCE(source_feedback_id, 0), is_active,
+		        COALESCE(rolled_back_from_version, 0), created_at
+		   FROM user_profile_snapshot
+		  WHERE user_id = ?
+		  ORDER BY version DESC, id DESC
+		  LIMIT ?`,
+		userID,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.UserProfileSnapshot, 0)
+	for rows.Next() {
+		item, err := scanUserProfileSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) InsertUserProfileSnapshotVersion(ctx context.Context, snapshot model.UserProfileSnapshot) (model.UserProfileSnapshot, error) {
+	if snapshot.UserID == "" {
+		return model.UserProfileSnapshot{}, errors.New("user_id is required")
+	}
+	if snapshot.Snapshot == nil {
+		snapshot.Snapshot = map[string]string{}
+	}
+	if snapshot.Diff == nil {
+		snapshot.Diff = map[string]any{}
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	var latestVersion int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM user_profile_snapshot WHERE user_id = ?`, snapshot.UserID).Scan(&latestVersion); err != nil {
+		_ = tx.Rollback()
+		return model.UserProfileSnapshot{}, err
+	}
+	if snapshot.Version == 0 {
+		snapshot.Version = latestVersion + 1
+	}
+	if snapshot.BaseVersion == 0 && latestVersion > 0 {
+		snapshot.BaseVersion = latestVersion
+	}
+	if snapshot.ChangeReason == "" {
+		snapshot.ChangeReason = "feedback"
+	}
+	rawSnapshot, _ := json.Marshal(snapshot.Snapshot)
+	rawDiff, _ := json.Marshal(snapshot.Diff)
+	if _, err := tx.ExecContext(ctx, `UPDATE user_profile_snapshot SET is_active = FALSE WHERE user_id = ?`, snapshot.UserID); err != nil {
+		_ = tx.Rollback()
+		return model.UserProfileSnapshot{}, err
+	}
+	result, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO user_profile_snapshot (
+		 user_id, summary, snapshot_json, version, base_version, run_id, diff_json,
+		 change_reason, source_feedback_id, is_active, rolled_back_from_version
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)`,
+		snapshot.UserID,
+		snapshot.Summary,
+		string(rawSnapshot),
+		snapshot.Version,
+		nullableInt(snapshot.BaseVersion),
+		snapshot.RunID,
+		string(rawDiff),
+		snapshot.ChangeReason,
+		nullableUint64(snapshot.SourceFeedbackID),
+		nullableInt(snapshot.RolledBackFromVersion),
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return model.UserProfileSnapshot{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		_ = tx.Rollback()
+		return model.UserProfileSnapshot{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	snapshot.ID = uint64(id)
+	snapshot.IsActive = true
 	return snapshot, nil
+}
+
+func (s *Store) RollbackUserProfileSnapshot(ctx context.Context, userID string, targetVersion int, reason string) (model.UserProfileSnapshot, error) {
+	if targetVersion <= 0 {
+		return model.UserProfileSnapshot{}, errors.New("target version is required")
+	}
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	target, err := scanUserProfileSnapshot(db.QueryRowContext(
+		ctx,
+		`SELECT id, user_id, version, COALESCE(base_version, 0), run_id, COALESCE(summary, ''),
+		        COALESCE(CAST(snapshot_json AS CHAR), '{}'), COALESCE(CAST(diff_json AS CHAR), '{}'),
+		        change_reason, COALESCE(source_feedback_id, 0), is_active,
+		        COALESCE(rolled_back_from_version, 0), created_at
+		   FROM user_profile_snapshot
+		  WHERE user_id = ? AND version = ?
+		  LIMIT 1`,
+		userID,
+		targetVersion,
+	))
+	if err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	active, activeErr := s.ActiveUserProfileSnapshot(ctx, userID)
+	baseVersion := 0
+	diff := map[string]any{}
+	if activeErr == nil {
+		baseVersion = active.Version
+		diffResult := ProfileDiff(active.Snapshot, target.Snapshot, reason)
+		diff = map[string]any{
+			"before":  diffResult.Before,
+			"after":   diffResult.After,
+			"changes": diffResult.Changes,
+		}
+	}
+	if reason == "" {
+		reason = "rollback"
+	}
+	return s.InsertUserProfileSnapshotVersion(ctx, model.UserProfileSnapshot{
+		UserID:                userID,
+		BaseVersion:           baseVersion,
+		RunID:                 fmt.Sprintf("rollback-%d-%d", targetVersion, time.Now().UTC().UnixNano()),
+		Summary:               target.Summary,
+		Snapshot:              target.Snapshot,
+		Diff:                  diff,
+		ChangeReason:          reason,
+		RolledBackFromVersion: targetVersion,
+	})
+}
+
+func (s *Store) InsertMemoryCompensationTask(ctx context.Context, task model.MemoryCompensationTask) error {
+	if task.TaskID == "" {
+		value := strings.Join([]string{task.RunID, task.UserID, task.TaskType, task.TargetSystem}, "\x00")
+		task.TaskID = fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+	}
+	if task.Status == "" {
+		task.Status = "pending"
+	}
+	payload, _ := json.Marshal(task.Payload)
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT INTO memory_compensation_tasks (
+		 task_id, run_id, user_id, task_type, target_system, payload_json, status, last_error
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE status = VALUES(status), last_error = VALUES(last_error), updated_at = CURRENT_TIMESTAMP`,
+		task.TaskID,
+		task.RunID,
+		task.UserID,
+		task.TaskType,
+		task.TargetSystem,
+		string(payload),
+		task.Status,
+		task.LastError,
+	)
+	return err
 }
 
 // 函数作用：
@@ -487,8 +1303,10 @@ func (s *Store) InsertMcpCallLogs(ctx context.Context, logs []model.McpCallLog) 
 	// 预编译 INSERT 语句，提高批量写入效率。
 	stmt, err := tx.PrepareContext(
 		ctx,
-		`INSERT INTO mcp_call_logs (run_id, agent_name, server_name, tool_name, request_json, response_json, status, error_message, success, latency_ms)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO mcp_call_logs (call_id, run_id, agent_name, server_name, tool_name, request_json, response_json, status, error_message, success, latency_ms)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE response_json = VALUES(response_json), status = VALUES(status),
+		 error_message = VALUES(error_message), success = VALUES(success), latency_ms = VALUES(latency_ms)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -503,6 +1321,9 @@ func (s *Store) InsertMcpCallLogs(ctx context.Context, logs []model.McpCallLog) 
 		req := normalizeJSON(log.RequestJSON)
 		// response_json 同样做合法 JSON 归一化。
 		resp := normalizeJSON(log.ResponseJSON)
+		if log.CallID == "" {
+			log.CallID = legacyMcpCallID(log, req)
+		}
 		// status 为空时根据 success 推导，兼容旧版本 Python Agent 响应。
 		status := log.Status
 		if status == "" {
@@ -513,7 +1334,7 @@ func (s *Store) InsertMcpCallLogs(ctx context.Context, logs []model.McpCallLog) 
 			}
 		}
 		// 执行单条日志写入。
-		if _, err := stmt.ExecContext(ctx, log.RunID, log.AgentName, log.ServerName, log.ToolName, req, resp, status, log.ErrorMessage, log.Success, log.LatencyMS); err != nil {
+		if _, err := stmt.ExecContext(ctx, log.CallID, log.RunID, log.AgentName, log.ServerName, log.ToolName, req, resp, status, log.ErrorMessage, log.Success, log.LatencyMS); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -570,15 +1391,23 @@ func (s *Store) open(ctx context.Context) (*sql.DB, error) {
 // 返回值：
 // - 返回去空后的 SQL 语句列表。
 func splitSQLStatements(raw string) []string {
-	// 当前 init.sql 较简单，用分号拆分即可；复杂存储过程场景不适用。
-	parts := strings.Split(raw, ";")
+	lines := strings.Split(raw, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+	parts := strings.Split(strings.Join(cleaned, "\n"), ";")
 	// 预分配语句列表容量。
 	statements := make([]string, 0, len(parts))
 	for _, part := range parts {
 		// 去除每段前后空白。
 		statement := strings.TrimSpace(part)
 		// 空语句或纯注释段跳过。
-		if statement == "" || strings.HasPrefix(statement, "--") {
+		if statement == "" {
 			continue
 		}
 		// 追加可执行语句。
@@ -612,6 +1441,237 @@ func normalizeJSON(raw string) string {
 	return string(encoded)
 }
 
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableInt(value int) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableUint64(value uint64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value
+}
+
+func nullableTimeString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func legacyMcpCallID(log model.McpCallLog, requestJSON string) string {
+	value := strings.Join([]string{
+		log.RunID,
+		log.AgentName,
+		log.ServerName,
+		log.ToolName,
+		requestJSON,
+	}, "\x00")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+}
+
+func FeedbackIdempotencyKey(userID, postID, articleID, feedbackType string, rating int, text string) string {
+	normalizedText := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	value := strings.Join([]string{userID, postID, articleID, feedbackType, fmt.Sprintf("%d", rating), normalizedText}, "\x00")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+}
+
+func ProfileDiff(before map[string]string, after map[string]string, reason string) model.ProfileDiffResult {
+	result := model.ProfileDiffResult{
+		Before:  before,
+		After:   after,
+		Changes: []model.ProfileDiffChange{},
+	}
+	keys := map[string]struct{}{}
+	for key := range before {
+		keys[key] = struct{}{}
+	}
+	for key := range after {
+		keys[key] = struct{}{}
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	for _, key := range ordered {
+		if before[key] != after[key] {
+			result.Changes = append(result.Changes, model.ProfileDiffChange{
+				Path:   key,
+				Before: before[key],
+				After:  after[key],
+				Reason: reason,
+			})
+		}
+	}
+	return result
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanFeedbackRecord(row rowScanner) (model.FeedbackRecord, error) {
+	var record model.FeedbackRecord
+	var rawFeedback string
+	if err := row.Scan(
+		&record.ID,
+		&record.RunID,
+		&record.PostUID,
+		&record.ArticleUID,
+		&record.UserID,
+		&record.FeedbackType,
+		&record.Rating,
+		&record.Comment,
+		&record.IdempotencyKey,
+		&rawFeedback,
+		&record.StructuredFeedbackJSON,
+		&record.ProcessStatus,
+		&record.ProfileVersion,
+		&record.ErrorMessage,
+		&record.CreatedAt,
+	); err != nil {
+		return model.FeedbackRecord{}, err
+	}
+	record.RawFeedback = map[string]any{}
+	_ = json.Unmarshal([]byte(rawFeedback), &record.RawFeedback)
+	return record, nil
+}
+
+func scanUserProfileSnapshot(row rowScanner) (model.UserProfileSnapshot, error) {
+	var snapshot model.UserProfileSnapshot
+	var rawSnapshot string
+	var rawDiff string
+	if err := row.Scan(
+		&snapshot.ID,
+		&snapshot.UserID,
+		&snapshot.Version,
+		&snapshot.BaseVersion,
+		&snapshot.RunID,
+		&snapshot.Summary,
+		&rawSnapshot,
+		&rawDiff,
+		&snapshot.ChangeReason,
+		&snapshot.SourceFeedbackID,
+		&snapshot.IsActive,
+		&snapshot.RolledBackFromVersion,
+		&snapshot.CreatedAt,
+	); err != nil {
+		return model.UserProfileSnapshot{}, err
+	}
+	snapshot.Snapshot = map[string]string{}
+	snapshot.Diff = map[string]any{}
+	_ = json.Unmarshal([]byte(rawSnapshot), &snapshot.Snapshot)
+	_ = json.Unmarshal([]byte(rawDiff), &snapshot.Diff)
+	return snapshot, nil
+}
+
+func scanTaskRun(row rowScanner) (model.TaskRun, error) {
+	var task model.TaskRun
+	var inputPayload string
+	var partialResult string
+	var startedAt sql.NullTime
+	var finishedAt sql.NullTime
+	var nextRetryAt sql.NullTime
+	if err := row.Scan(
+		&task.RunID,
+		&task.TaskType,
+		&task.UserID,
+		&task.Status,
+		&task.CurrentStep,
+		&task.IdempotencyKey,
+		&task.InputSummary,
+		&task.OutputSummary,
+		&task.ErrorMessage,
+		&inputPayload,
+		&partialResult,
+		&task.RetryCount,
+		&task.MaxRetries,
+		&task.TimeoutSeconds,
+		&task.CancelRequested,
+		&task.LockedBy,
+		&startedAt,
+		&finishedAt,
+		&nextRetryAt,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	); err != nil {
+		return model.TaskRun{}, err
+	}
+	task.InputPayload = map[string]any{}
+	task.PartialResult = map[string]any{}
+	_ = json.Unmarshal([]byte(inputPayload), &task.InputPayload)
+	_ = json.Unmarshal([]byte(partialResult), &task.PartialResult)
+	if startedAt.Valid {
+		task.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		task.FinishedAt = &finishedAt.Time
+	}
+	if nextRetryAt.Valid {
+		task.NextRetryAt = &nextRetryAt.Time
+	}
+	return task, nil
+}
+
+func scanTaskStep(row rowScanner) (model.TaskStep, error) {
+	var step model.TaskStep
+	var startedAt sql.NullTime
+	var completedAt sql.NullTime
+	if err := row.Scan(
+		&step.RunID,
+		&step.StepName,
+		&step.Status,
+		&startedAt,
+		&completedAt,
+		&step.InputSummary,
+		&step.OutputSummary,
+		&step.ErrorMessage,
+		&step.RetryCount,
+		&step.CreatedAt,
+		&step.UpdatedAt,
+	); err != nil {
+		return model.TaskStep{}, err
+	}
+	if startedAt.Valid {
+		step.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		step.CompletedAt = &completedAt.Time
+	}
+	return step, nil
+}
+
+func nonNilMap(value map[string]any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
 // 函数作用：
 // 兼容旧数据库结构，确保 mcp_call_logs 表包含当前代码需要的列。
 //
@@ -629,6 +1689,7 @@ func (s *Store) ensureMcpCallLogColumns(ctx context.Context, db *sql.DB) error {
 		// ddl 是列不存在时执行的 ALTER TABLE 语句。
 		ddl string
 	}{
+		{name: "call_id", ddl: "ALTER TABLE mcp_call_logs ADD COLUMN call_id VARCHAR(64) NOT NULL DEFAULT '' FIRST"},
 		{name: "agent_name", ddl: "ALTER TABLE mcp_call_logs ADD COLUMN agent_name VARCHAR(128) NOT NULL DEFAULT '' AFTER run_id"},
 		{name: "status", ddl: "ALTER TABLE mcp_call_logs ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'success' AFTER response_json"},
 		{name: "error_message", ddl: "ALTER TABLE mcp_call_logs ADD COLUMN error_message TEXT NULL AFTER status"},
@@ -652,6 +1713,15 @@ func (s *Store) ensureMcpCallLogColumns(ctx context.Context, db *sql.DB) error {
 				return err
 			}
 		}
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE mcp_call_logs SET call_id = SHA2(CONCAT('legacy:', id), 256) WHERE call_id = ''"); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "CREATE UNIQUE INDEX uk_mcp_call_id ON mcp_call_logs (call_id)"); err != nil && !strings.Contains(err.Error(), "Duplicate key name") {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "CREATE UNIQUE INDEX uk_feedback_run_id ON feedback_logs (run_id)"); err != nil && !strings.Contains(err.Error(), "Duplicate key name") {
+		return err
 	}
 	return nil
 }

@@ -11,7 +11,7 @@
 # 2. LLMClient：定义不同 LLM provider 的统一接口。
 # 3. MockLLMClient：本地 mock provider，不访问外部 API，便于测试和离线开发。
 # 4. OpenAICompatibleLLMClient：通过 /chat/completions 调用 OpenAI 兼容接口。
-# 5. ClaudeLLMClient：保留 Claude provider 接口，当前 MVP 未实现真实调用。
+# 5. ClaudeLLMClient：通过 Anthropic Messages API 调用 Claude。
 # 6. LLMTool：Agent 使用的统一入口，负责结构化生成、校验、repair 和 fallback。
 # 7. build_llm_tool / build_llm_client：根据配置和环境变量创建 LLMTool。
 #
@@ -73,6 +73,7 @@ class FeedbackLLMOutput(BaseModel):
     sentiment: Literal["positive", "neutral", "negative"] = "neutral"
     # extracted_feedback 保存从反馈中提取出的用户偏好或问题信号。
     extracted_feedback: list[str] = Field(default_factory=list)
+    structured_feedback: dict[str, Any] = Field(default_factory=dict)
     # issues 记录解析、修复或 fallback 的问题。
     issues: list[str] = Field(default_factory=list)
 
@@ -182,9 +183,24 @@ class MockLLMClient(LLMClient):
                 sentiment = "neutral"
             # extracted 保存从反馈中提取的可读偏好文本。
             extracted = []
+            structured = {
+                "positive": [],
+                "negative": [],
+                "style_preferences": [],
+                "raw_signals": [],
+            }
             # 遍历每条反馈，优先保留用户写的文本。
             for item in feedback:
                 value = str(item.get("feedback_text", "")).strip()
+                feedback_type = str(item.get("feedback_type", "")).lower()
+                rating = int(item.get("rating") or 0)
+                topic = "工程实践" if "工程" in value or "practice" in value.lower() else "general"
+                if rating >= 4 or feedback_type in {"like", "favorite", "bookmark"}:
+                    structured["positive"].append({"topic": topic, "weight_delta": 0.08, "evidence": value})
+                elif rating <= 2 or feedback_type in {"dislike", "hide"}:
+                    structured["negative"].append({"topic": topic, "weight_delta": -0.1, "evidence": value})
+                if any(word in value.lower() for word in ["详细", "detail", "细节", "深入"]):
+                    structured["style_preferences"].append({"name": "detail_level", "value": "high", "confidence": 0.8})
                 # 有反馈文本时截断到 200 字，避免用户长文本让画像快照过大。
                 if value:
                     extracted.append(value[:200])
@@ -192,7 +208,15 @@ class MockLLMClient(LLMClient):
                 elif item.get("feedback_type"):
                     extracted.append(f"{item.get('feedback_type')} rating={item.get('rating', 0)}")
             # 返回 FeedbackLLMOutput 需要的字段。
-            return json.dumps({"sentiment": sentiment, "extracted_feedback": extracted, "issues": []}, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "sentiment": sentiment,
+                    "extracted_feedback": extracted,
+                    "structured_feedback": structured,
+                    "issues": [],
+                },
+                ensure_ascii=False,
+            )
         # 未知任务返回空 JSON；随后 Pydantic 校验通常会失败并触发 fallback。
         return "{}"
 
@@ -280,8 +304,7 @@ class OpenAICompatibleLLMClient(LLMClient):
 
 
 # 类作用：
-# ClaudeLLMClient 预留 Claude provider 形状。
-# 当前 MVP 没有实现真实 Claude HTTP 协议，因此如果被使用会抛错并触发 LLMTool fallback。
+# ClaudeLLMClient 通过 Anthropic Messages API 调用 Claude。
 class ClaudeLLMClient(LLMClient):
     # provider_name 用于区分日志中的 Claude provider。
     provider_name = "claude"
@@ -293,9 +316,7 @@ class ClaudeLLMClient(LLMClient):
     # - settings：Claude 模型和环境变量配置。
     # - api_key：从环境变量读取的 API Key。
     def __init__(self, settings: ClaudeSettings, api_key: str) -> None:
-        # 保存配置，便于未来实现真实 Claude 调用。
         self.settings = settings
-        # 保存 API Key，当前 MVP 不使用。
         self.api_key = api_key
 
     # 函数作用：
@@ -307,8 +328,40 @@ class ClaudeLLMClient(LLMClient):
     # 返回值：
     # - 当前不会正常返回，会抛出 RuntimeError。
     def complete_json(self, task: str, system_prompt: str, user_prompt: str) -> str:
-        # 明确告诉调用方 Claude provider 尚未实现，而不是伪装成真实服务。
-        raise RuntimeError("Claude provider interface is reserved but not implemented in this MVP")
+        endpoint = self.settings.base_url.rstrip("/") + "/messages"
+        body = {
+            "model": self.settings.model,
+            "max_tokens": 2048,
+            "temperature": 0.2,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+        req = urlrequest.Request(
+            endpoint,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(req, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except URLError as exc:
+            raise RuntimeError(f"Claude request failed: {exc}") from exc
+        try:
+            text_blocks = [
+                str(block["text"])
+                for block in payload["content"]
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            if not text_blocks:
+                raise ValueError("empty content")
+            return "\n".join(text_blocks)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Claude response did not contain a text content block") from exc
 
 
 # 类作用：
@@ -579,7 +632,6 @@ def build_llm_client(settings: LLMSettings) -> tuple[LLMClient, list[str]]:
             return MockLLMClient(), warnings
         # 有 API Key 时创建真实 OpenAI 兼容客户端。
         return OpenAICompatibleLLMClient(settings.openai, api_key), warnings
-    # Claude provider 目前只保留接口形状。
     if provider == "claude":
         # Claude API Key 的环境变量名来自配置。
         api_key = os.getenv(settings.claude.api_key_env, "")
@@ -589,10 +641,6 @@ def build_llm_client(settings: LLMSettings) -> tuple[LLMClient, list[str]]:
             LOGGER.warning(message)
             warnings.append(message)
             return MockLLMClient(), warnings
-        # 即使有 API Key，当前 MVP 仍不实现 Claude 调用；返回 ClaudeLLMClient 后会在每次请求中触发 fallback。
-        message = "Claude provider is a stub in this MVP; calls fall back per request if used"
-        LOGGER.warning(message)
-        warnings.append(message)
         return ClaudeLLMClient(settings.claude, api_key), warnings
     # 未知 provider 不抛错，回退 mock，保证服务启动和本地开发不被配置错误阻断。
     message = f"Unknown LLM provider `{provider}`; falling back to mock LLM provider"

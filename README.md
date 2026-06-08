@@ -1,6 +1,6 @@
 # knowledge-post-agent
 
-MVP monorepo for a personalized knowledge-post summarization assistant built around GoFrame, Python gRPC, LangGraph, MCP-style clients, MySQL, Milvus, and Neo4j.
+MVP monorepo for a personalized knowledge-post summarization assistant built around GoFrame, Python gRPC, LangGraph, the official Model Context Protocol Python SDK, MySQL, Milvus, and Neo4j.
 
 The current focus is a runnable Python Agent Service using `grpcio + protobuf`. LLM, MCP, Milvus, and Neo4j behavior is mocked by default.
 
@@ -32,8 +32,18 @@ The init script is [shared/sql/init.sql](D:/projects/KnowMate/knowledge-post-age
 - `posts`
 - `feedback_logs`
 - `run_logs`
+- `task_runs`
+- `task_steps`
 - `user_profile_snapshot`
+- `memory_compensation_tasks`
 - `mcp_call_logs`
+
+新增或升级已有数据库时，可按顺序执行 `shared/sql/migrations/` 下的 migration。Harness 任务控制层对应：
+
+```powershell
+mysql.exe -h 127.0.0.1 -P 3306 -u app knowledge_post_agent `
+  < shared\sql\migrations\20260608_harness_task_control.sql
+```
 
 ## GoFrame Backend
 
@@ -51,13 +61,40 @@ APIs:
 
 - `GET /health`: GoFrame status, MySQL ping, Python Agent `HealthCheck`
 - `POST /runs/articles`: read RSS sources from YAML, fetch, dedupe, save articles, call Python `ProcessArticles`, save posts, write run logs, generate Markdown
+- `GET /runs?status=running&task_type=articles&user_id=default-user`: 查询 Harness 任务运行记录
+- `GET /runs/{run_id}`: 查询单个任务及步骤详情
+- `POST /runs/{run_id}/cancel`: 请求取消 pending/running 任务
+- `POST /runs/{run_id}/retry`: 从 failed/partially_completed/pending 的任务恢复执行
 - `POST /feedback`: save feedback, call Python `ProcessFeedback`, update profile snapshot
 - `GET /posts`: list generated posts
+- `GET /profile?user_id=default-user`: 查看当前用户画像
+- `GET /profile/history?user_id=default-user&limit=20`: 查看画像版本历史
+- `POST /profile/rollback`: 回滚到历史画像版本并生成新版本
+- `GET /recommendations/explain?post_id=POST_UID`: 查看推荐解释和排序元数据
+- `POST /profile/rebuild`: 从已完成的结构化反馈重新构建用户画像
 
 Run one article processing job:
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:8080/runs/articles
+```
+
+Harness 任务控制层：
+
+- 任务状态机固定为 `pending` -> `running` -> `completed` / `failed` / `partially_completed` / `cancelled`。
+- 每个步骤会写入 `task_steps`，包含开始时间、完成时间、输入摘要、输出摘要、错误信息和重试次数。
+- `task_runs.partial_result_json` 保存文章入库、已处理数、已保存 posts、Markdown 路径和可恢复文章快照；服务重启后会把未完成任务恢复为 `pending`，之后可用 retry API 继续。
+- `harness.max_concurrent_tasks` 控制单进程并发任务数；同一用户同一任务类型只允许一个 `pending/running` 任务，`idempotency_key` 用于标识请求来源和后续审计。
+- gRPC 步骤使用指数退避重试，配置项为 `harness.step_max_retries`、`harness.retry_backoff_milliseconds`、`harness.max_retry_delay_milliseconds`。
+- 文章任务在调用 Python Agent 前会跳过已经存在 post 的 `article_uid`，并使用基于 `article_uid` 的稳定 `post_uid`，避免重复生成文章和推文。
+
+查询、取消和重试示例：
+
+```powershell
+curl.exe "http://127.0.0.1:8080/runs?status=partially_completed&task_type=articles"
+curl.exe "http://127.0.0.1:8080/runs/articles-20260608000100-abcd1234"
+curl.exe -X POST "http://127.0.0.1:8080/runs/articles-20260608000100-abcd1234/cancel"
+curl.exe -X POST "http://127.0.0.1:8080/runs/articles-20260608000100-abcd1234/retry"
 ```
 
 Send feedback:
@@ -74,6 +111,20 @@ List posts:
 curl.exe http://127.0.0.1:8080/posts
 ```
 
+Profile memory APIs:
+
+```powershell
+curl.exe "http://127.0.0.1:8080/profile?user_id=default-user"
+curl.exe "http://127.0.0.1:8080/profile/history?user_id=default-user&limit=20"
+curl.exe -X POST http://127.0.0.1:8080/profile/rollback `
+  -H "Content-Type: application/json" `
+  -d "{\"user_id\":\"default-user\",\"target_version\":1,\"reason\":\"manual_rollback\"}"
+curl.exe "http://127.0.0.1:8080/recommendations/explain?post_id=POST_UID_FROM_GET_POSTS"
+curl.exe -X POST http://127.0.0.1:8080/profile/rebuild `
+  -H "Content-Type: application/json" `
+  -d "{\"user_id\":\"default-user\"}"
+```
+
 Generated Markdown files are written to [shared/outputs](D:/projects/KnowMate/knowledge-post-agent/shared/outputs). The default RSS source is `mock://sample`, so the MVP can run without internet access once MySQL and Python Agent are up.
 
 ## End-To-End Smoke
@@ -86,7 +137,7 @@ GoFrame HTTP API
 -> MySQL articles
 -> Python gRPC ProcessArticles
 -> LangGraph agents
--> MCP JSON-RPC mock servers
+-> MCP servers over stdio or Streamable HTTP
 -> Python response
 -> MySQL posts/run_logs/mcp_call_logs
 -> shared/outputs Markdown
@@ -121,14 +172,18 @@ Example config files:
 - [shared/config/rss_sources.example.yaml](D:/projects/KnowMate/knowledge-post-agent/shared/config/rss_sources.example.yaml)
 - [shared/config/user_profile_snapshot.example.json](D:/projects/KnowMate/knowledge-post-agent/shared/config/user_profile_snapshot.example.json)
 
-To force Python Agent to call MCP mock servers instead of in-process mock transport:
+To force Python Agent to call the standalone MCP servers over Streamable HTTP:
 
 ```powershell
 $env:MOCK_MCP="false"
-$env:EMBEDDING_MCP_URL="http://127.0.0.1:7001"
-$env:FETCH_MCP_URL="http://127.0.0.1:7002"
-$env:MILVUS_MCP_URL="http://127.0.0.1:7003"
-$env:NEO4J_MCP_URL="http://127.0.0.1:7004"
+$env:EMBEDDING_MCP_TRANSPORT="streamable_http"
+$env:FETCH_MCP_TRANSPORT="streamable_http"
+$env:MILVUS_MCP_TRANSPORT="streamable_http"
+$env:NEO4J_MCP_TRANSPORT="streamable_http"
+$env:EMBEDDING_MCP_URL="http://127.0.0.1:7001/mcp"
+$env:FETCH_MCP_URL="http://127.0.0.1:7002/mcp"
+$env:MILVUS_MCP_URL="http://127.0.0.1:7003/mcp"
+$env:NEO4J_MCP_URL="http://127.0.0.1:7004/mcp"
 ```
 
 ## Python Agent
@@ -147,6 +202,19 @@ Regenerate Python protobuf stubs after editing [shared/proto/agent.proto](D:/pro
 ```powershell
 cd D:\projects\KnowMate\knowledge-post-agent
 python -m grpc_tools.protoc -I shared/proto --python_out=python-agent --grpc_python_out=python-agent shared/proto/agent.proto
+```
+
+### Recommendation Ranking
+
+Filter Agent uses a configurable personalized recommendation ranker. Scores are normalized to `0..10` and include per-dimension `score_breakdown`, `recommendation_reasons`, `rejection_reasons`, and `rank_position` in workflow and gRPC responses.
+
+GoFrame persists these explanation fields in `posts.metadata` together with `profile_version`. `GET /recommendations/explain?post_id=...` returns the stored metadata, so a recommendation can be audited after the original run has finished.
+
+Offline evaluation supports Precision@K, Recall@K, NDCG@K, diversity, and duplicate rate:
+
+```powershell
+cd D:\projects\KnowMate\knowledge-post-agent\python-agent
+python scripts\evaluate_recommendations.py --input path\to\recommendation_eval.json --k 5
 ```
 
 Start the server:
@@ -245,6 +313,10 @@ Each result returns:
 - `article_id`
 - `keep`
 - `score`
+- `rank_position`
+- `score_breakdown`
+- `recommendation_reasons`
+- `rejection_reasons`
 - `summary`
 - `post_text`
 - `check_pass`
@@ -261,8 +333,12 @@ The response returns:
 
 - `sentiment`
 - `extracted_feedback`
+- `structured_feedback`
 - `updated_profile_snapshot`
+- `profile_diff`
 - `mcp_call_logs`
+
+Feedback Agent 保存原始反馈，Memory Agent 将正反馈、负反馈和风格偏好拆成结构化信号。画像更新会生成新 `user_profile_snapshot.version`，写入 `diff_json`，并把 `structured_feedback_json` 和 `profile_version` 回写到 `feedback_logs`，用于幂等命中、版本追踪、回滚和重建。
 
 ## Skills
 
@@ -276,18 +352,43 @@ Skills live in [python-agent/app/skills](D:/projects/KnowMate/knowledge-post-age
 - `memory_update_skill.md`
 - `mcp_tool_usage_skill.md`
 
-## MCP Mock Clients
+## Standard MCP Client
 
-Python Agent uses mock MCP transport by default. Client abstractions are in [python-agent/app/mcp](D:/projects/KnowMate/knowledge-post-agent/python-agent/app/mcp):
+Python Agent uses the official MCP Python SDK. Client abstractions are in [python-agent/app/mcp](D:/projects/KnowMate/knowledge-post-agent/python-agent/app/mcp):
 
 - `base_client.py`
+- `sdk_transport.py`
 - `policy.py`
 - `embedding_client.py`
 - `milvus_client.py`
 - `neo4j_client.py`
 - `fetch_client.py`
 
-The transport preserves a future JSON-RPC MCP call shape and records request/response logs.
+Each server independently selects `memory`, `stdio`, or `streamable_http`. The Agent initializes official SDK `ClientSession` instances, executes `tools/list` during startup, caches discovered Tool schemas, and uses `tools/call` for all remote calls. Agent code never calls MCP Server handler functions directly.
+
+Mixed transport configuration in [python-agent/config.yaml](D:/projects/KnowMate/knowledge-post-agent/python-agent/config.yaml):
+
+```yaml
+mcp:
+  memory_fallback: true
+  servers:
+    embedding-mcp:
+      transport: stdio
+      command: python
+      args: ["../mcp-servers/embedding-mcp/server.py"]
+      env:
+        MCP_TRANSPORT: stdio
+    fetch-mcp:
+      transport: streamable_http
+      url: http://127.0.0.1:7002/mcp
+    milvus-mcp:
+      transport: memory
+    neo4j-mcp:
+      transport: streamable_http
+      url: http://127.0.0.1:7004/mcp
+```
+
+The unified client validates discovered input/output JSON Schemas, applies timeout, exponential retry, circuit breaking, and optional memory fallback. MCP unavailability returns a structured failure or degraded result and does not crash the task.
 
 ### MCP Tool Permissions And Logs
 
@@ -313,7 +414,7 @@ Unauthorized calls are not sent to MCP transport. They return a structured error
 }
 ```
 
-All MCP calls return and persist these log fields:
+All MCP calls return these log fields:
 
 - `run_id`
 - `agent_name`
@@ -325,29 +426,45 @@ All MCP calls return and persist these log fields:
 - `error_message`
 - `success`
 - `latency_ms`
+- `attempts`
+- `fallback`
 
-GoFrame writes logs received from `ProcessArticles` and `ProcessFeedback` into MySQL `mcp_call_logs`. MCP call failure or denial is degraded into a log row and does not crash the Python workflow.
+Sensitive keys such as `api_key`, `authorization`, `token`, `password`, and `cookie` are redacted from request and response logs. GoFrame writes the protobuf-supported core fields received from `ProcessArticles` and `ProcessFeedback` into MySQL `mcp_call_logs`.
 
-## MCP Mock Servers
+## MCP Servers
 
-Standalone HTTP mock servers are still available:
+The standalone servers use the official MCP Python SDK and expose `tools/list` and `tools/call`. Streamable HTTP is the default server transport:
 
 ```powershell
 cd D:\projects\KnowMate\knowledge-post-agent\mcp-servers\embedding-mcp
+$env:MCP_TRANSPORT="streamable_http"
 python server.py
 ```
 
-Default ports:
+The MCP endpoint is `http://127.0.0.1:7001/mcp`; `GET /health` remains available for operations checks. Default ports:
 
 - `embedding-mcp`: `7001`
 - `fetch-mcp`: `7002`
 - `milvus-mcp`: `7003`
 - `neo4j-mcp`: `7004`
 
+Run one server over stdio:
+
+```powershell
+cd D:\projects\KnowMate\knowledge-post-agent\mcp-servers\embedding-mcp
+$env:MCP_TRANSPORT="stdio"
+python server.py
+```
+
+For local development without subprocesses or network services, keep every server transport set to `memory`. `MCP_MEMORY_FALLBACK=true` additionally allows remote failures to degrade to the in-process memory implementation.
+
 ## Tests
 
 ```powershell
 cd D:\projects\KnowMate\knowledge-post-agent\python-agent
+python -m unittest discover -s tests
+
+cd D:\projects\KnowMate\knowledge-post-agent\mcp-servers
 python -m unittest discover -s tests
 ```
 
@@ -357,3 +474,135 @@ The current Python tests cover:
 - feedback workflow profile update
 - protobuf `AgentService.ProcessArticles` service call
 - LLM mock provider, OpenAI missing-key fallback, JSON repair retry, and fallback issue behavior
+- official MCP stdio and Streamable HTTP sessions
+- startup Tool discovery/cache, permission denial, Schema validation, retry, circuit breaker, fallback, and log redaction
+
+## Production Embedding, Milvus, And Neo4j
+
+Development remains dependency-free by default. The base Compose file starts
+the MCP servers with:
+
+```text
+EMBEDDING_PROVIDER=memory
+MILVUS_PROVIDER=memory
+NEO4J_PROVIDER=memory
+```
+
+Memory mode implements the same stable IDs, exact vector-dimension checks,
+structured metadata filters, semantic deduplication, and idempotent interest
+events used by production adapters.
+
+Install the production MCP dependencies:
+
+```powershell
+cd D:\projects\KnowMate\knowledge-post-agent\mcp-servers
+pip install -r requirements.txt
+```
+
+Required production secrets must be supplied outside the repository:
+
+```powershell
+$env:OPENAI_API_KEY="..."
+$env:MINIO_ROOT_USER="..."
+$env:MINIO_ROOT_PASSWORD="..."
+$env:NEO4J_PASSWORD="..."
+```
+
+Do not send API keys in chat or commit them to `.env`. MCP providers also
+support `OPENAI_API_KEY_FILE`, `MILVUS_TOKEN_FILE`, and
+`NEO4J_PASSWORD_FILE` for mounted Docker/Kubernetes secrets.
+
+Start the production dependency stack and real MCP adapters:
+
+```powershell
+docker compose `
+  -f docker-compose.yml `
+  -f docker-compose.production.yml `
+  --profile production `
+  up -d --build
+```
+
+The real embedding adapter uses `text-embedding-3-large` by default. GPT-5.5
+remains a separate Agent generation/reasoning model and is not used as an
+embedding model.
+
+Initialize or validate Milvus and Neo4j without destructive migration:
+
+```powershell
+python .\scripts\init_memory_services.py
+```
+
+The initializer creates `user_memory_vectors` when absent and creates Neo4j
+constraints/indexes idempotently. If an existing Milvus collection has an
+incompatible schema or embedding dimension, initialization fails without
+dropping or rebuilding the collection. Migrate explicitly or use a new
+`MILVUS_COLLECTION`.
+
+MCP health endpoints:
+
+- `http://127.0.0.1:7001/health`: embedding provider/model/dimension
+- `http://127.0.0.1:7003/health`: Milvus collection/dimension
+- `http://127.0.0.1:7004/health`: Neo4j connection/database
+
+Memory mode returns HTTP `200`. A configured production dependency that is
+missing, unavailable, or incompatible returns HTTP `503`, while the MCP
+process remains alive. Python Agent then applies its existing timeout, retry,
+circuit breaker, and optional memory fallback behavior.
+
+Run Docker-backed Milvus and Neo4j integration tests:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration_test.ps1 -RealMemoryServices
+```
+
+The paid OpenAI smoke test is opt-in:
+
+```powershell
+$env:RUN_OPENAI_EMBEDDING_SMOKE="1"
+$env:OPENAI_API_KEY="..."
+cd .\mcp-servers
+python -m unittest tests.test_real_services_integration.RealOpenAIEmbeddingSmokeTest -v
+```
+
+## 生产抓取器与正文处理
+
+GoFrame 后端支持 RSS、Atom、Arxiv、GitHub Release 和 HuggingFace Papers。RSS 与 Atom 使用统一的 `feed` 类型，其余类型分别为 `arxiv`、`github_release`、`huggingface_papers`；本地开发可使用不会访问公网的 `mock` 类型。
+
+来源通过 `crawler.sources` 配置。仅当 `crawler.sources` 缺失时，旧版 `rss.sources` 才会自动转换为 `feed` 或 `mock` 来源，避免重复抓取。完整示例见 `shared/config/rss_sources.example.yaml`。
+
+抓取流程包含：
+
+- URL 规范化，以及 URL、标题、正文哈希多级去重
+- robots.txt 缓存与检查、按主机请求频率限制
+- 可配置 User-Agent、超时、重试、指数退避和最大响应大小
+- HTML 正文提取、噪声清理、作者与发布时间识别
+- 中文、英文、混合内容识别
+- 单条或单来源失败隔离
+
+网页正文抓取失败但来源条目包含正文时，文章会使用来源正文回退并标记为 `partial`。完全无法获得正文时标记为 `failed`。失败原因保存在 `fetch_error_type` 和 `fetch_error`，常见分类包括 `robots_denied`、`rate_limited`、`timeout`、`dns_error`、`http_4xx`、`http_5xx`、`parse_error` 和 `content_extraction_error`。
+
+MySQL `articles` 表同时保存 `raw_content`、`clean_content`、`content_hash`、`language` 和抓取诊断字段；`crawl_source_runs` 保存每个来源的运行状态和计数。新环境使用 `shared/sql/init.sql`，已有环境执行：
+
+```powershell
+$sql = Get-Content -Raw .\shared\sql\migrations\20260606_production_crawler.sql
+$sql | docker compose exec -T mysql mysql "-uroot" "-p$env:MYSQL_ROOT_PASSWORD" knowledge_post_agent
+```
+
+抓取单元测试与集成测试全部使用 `testdata`、`mock://` 或 `httptest.Server`，不依赖公网：
+
+```powershell
+cd .\goframe-backend
+go test ./internal/crawler -count=1
+go test ./internal/crawler -run TestCrawlerIntegration -count=1 -v
+```
+
+## 用户画像记忆与补偿
+
+已有环境执行用户反馈、画像版本、推荐解释和补偿任务迁移：
+
+```powershell
+$sql = Get-Content -Raw .\shared\sql\migrations\20260608_feedback_memory_profile_versioning.sql
+$sql | docker compose exec -T mysql mysql "-uroot" "-p$env:MYSQL_ROOT_PASSWORD" knowledge_post_agent
+```
+
+`feedback_logs` 保存幂等键、原始反馈 JSON、结构化反馈 JSON、处理状态和画像版本；`user_profile_snapshot` 每次更新都会生成新 `version`，并保存 `base_version`、`diff_json`、`is_active` 和回滚来源；`memory_compensation_tasks` 保存 Milvus、Neo4j、MySQL 等部分失败后的重试和补偿任务。

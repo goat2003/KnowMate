@@ -24,8 +24,12 @@
 # 再看 ProcessArticles 如何把 request.articles 转成 ArticleWorkflow 需要的 dict。
 from __future__ import annotations
 
+from collections import OrderedDict
 from concurrent import futures
+import hashlib
+import json
 import logging
+from threading import Event, Lock
 from typing import Any
 
 import grpc
@@ -39,6 +43,67 @@ from app.workflow import ArticleWorkflow
 
 # LOGGER 用于记录 gRPC Server 启动地址等服务端日志。
 LOGGER = logging.getLogger(__name__)
+
+
+class ResponseCache:
+    def __init__(self, max_size: int) -> None:
+        self.max_size = max(max_size, 1)
+        self._responses: OrderedDict[str, bytes] = OrderedDict()
+        self._inflight: dict[str, Event] = {}
+        self._lock = Lock()
+
+    def get_or_compute(self, key: str, response_type, compute):
+        while True:
+            with self._lock:
+                cached = self._responses.get(key)
+                if cached is not None:
+                    self._responses.move_to_end(key)
+                    response = response_type()
+                    response.ParseFromString(cached)
+                    return response
+                event = self._inflight.get(key)
+                if event is None:
+                    event = Event()
+                    self._inflight[key] = event
+                    break
+            event.wait()
+
+        try:
+            response = compute()
+            encoded = response.SerializeToString(deterministic=True)
+            with self._lock:
+                self._responses[key] = encoded
+                self._responses.move_to_end(key)
+                while len(self._responses) > self.max_size:
+                    self._responses.popitem(last=False)
+            return response
+        finally:
+            with self._lock:
+                event = self._inflight.pop(key)
+                event.set()
+
+
+def _request_key(method: str, request: Any) -> str:
+    digest = hashlib.sha256(request.SerializeToString(deterministic=True)).hexdigest()
+    return f"{method}:{digest}"
+
+
+def _invalid_argument(context: grpc.ServicerContext | None, message: str) -> None:
+    if context is None:
+        raise ValueError(message)
+    context.abort(grpc.StatusCode.INVALID_ARGUMENT, message)
+
+
+def _score_breakdown_to_proto(item: dict[str, Any]) -> agent_pb2.ScoreBreakdownItem:
+    return agent_pb2.ScoreBreakdownItem(
+        dimension=str(item.get("dimension", "")),
+        available=bool(item.get("available", False)),
+        raw_score=float(item.get("raw_score", 0)),
+        normalized_score=float(item.get("normalized_score", 0)),
+        weight=float(item.get("weight", 0)),
+        contribution=float(item.get("contribution", 0)),
+        evidence=[str(value) for value in item.get("evidence", [])],
+    )
 
 
 # 类作用：
@@ -59,6 +124,10 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
         # ArticleWorkflow 是实际执行业务逻辑的对象。
         # gRPC 层只负责协议转换，不直接处理 Agent 细节。
         self.workflow = ArticleWorkflow(settings)
+        self.response_cache = ResponseCache(settings.idempotency_cache_size)
+
+    def close(self) -> None:
+        self.workflow.close()
 
     # 函数作用：
     # gRPC 健康检查接口，用于 GoFrame 或运维侧确认 Python Agent Service 是否可用。
@@ -96,6 +165,22 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
     # - 被 GoFrame gRPC Client 调用。
     # - 内部调用 ArticleWorkflow.process_articles。
     def ProcessArticles(self, request: agent_pb2.ProcessArticlesRequest, context: grpc.ServicerContext):
+        if not request.run_id:
+            _invalid_argument(context, "run_id is required")
+        if not request.articles:
+            _invalid_argument(context, "at least one article is required")
+        if len(request.articles) > self.settings.max_articles_per_request:
+            _invalid_argument(
+                context,
+                f"article count exceeds max_articles_per_request={self.settings.max_articles_per_request}",
+            )
+        return self.response_cache.get_or_compute(
+            _request_key("ProcessArticles", request),
+            agent_pb2.ProcessArticlesResponse,
+            lambda: self._process_articles(request),
+        )
+
+    def _process_articles(self, request: agent_pb2.ProcessArticlesRequest):
         # 将 protobuf 请求转换成普通 Python dict，降低工作流层对 protobuf 生成类型的依赖。
         result = self.workflow.process_articles(
             {
@@ -136,6 +221,10 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
                     issues=item["issues"],
                     # 每条 MCP 日志也需要转换为 protobuf message。
                     mcp_call_logs=[_log_to_proto(log) for log in item.get("mcp_call_logs", [])],
+                    score_breakdown=[_score_breakdown_to_proto(part) for part in item.get("score_breakdown", [])],
+                    recommendation_reasons=[str(value) for value in item.get("recommendation_reasons", [])],
+                    rejection_reasons=[str(value) for value in item.get("rejection_reasons", [])],
+                    rank_position=int(item.get("rank_position", 0)),
                 )
             )
         return response
@@ -154,6 +243,22 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
     # - 被 GoFrame gRPC Client 调用。
     # - 内部调用 ArticleWorkflow.process_feedback。
     def ProcessFeedback(self, request: agent_pb2.ProcessFeedbackRequest, context: grpc.ServicerContext):
+        if not request.run_id:
+            _invalid_argument(context, "run_id is required")
+        if not request.feedback:
+            _invalid_argument(context, "at least one feedback item is required")
+        if len(request.feedback) > self.settings.max_feedback_per_request:
+            _invalid_argument(
+                context,
+                f"feedback count exceeds max_feedback_per_request={self.settings.max_feedback_per_request}",
+            )
+        return self.response_cache.get_or_compute(
+            _request_key("ProcessFeedback", request),
+            agent_pb2.ProcessFeedbackResponse,
+            lambda: self._process_feedback(request),
+        )
+
+    def _process_feedback(self, request: agent_pb2.ProcessFeedbackRequest):
         # 将 protobuf FeedbackInput 列表转换为 Python dict 列表。
         result = self.workflow.process_feedback(
             {
@@ -188,6 +293,16 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             updated_profile_snapshot={str(k): str(v) for k, v in result.get("updated_profile_snapshot", {}).items()},
             # 顶层 MCP 调用日志来自 MemoryAgent。
             mcp_call_logs=[_log_to_proto(log) for log in result.get("mcp_call_logs", [])],
+            structured_feedback_json=json.dumps(
+                result.get("structured_feedback", {}),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            profile_diff_json=json.dumps(
+                result.get("profile_diff", {}),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
 
 
@@ -199,11 +314,17 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
 #
 # 返回值：
 # - 返回尚未 start 的 grpc.Server 对象。
-def create_server(settings: Settings) -> grpc.Server:
+def create_server(settings: Settings, service: AgentService | None = None) -> grpc.Server:
     # ThreadPoolExecutor(max_workers=10) 表示 gRPC 可以用最多 10 个工作线程处理并发请求。
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=settings.grpc_max_workers),
+        options=[
+            ("grpc.max_receive_message_length", settings.grpc_max_message_bytes),
+            ("grpc.max_send_message_length", settings.grpc_max_message_bytes),
+        ],
+    )
     # 将 AgentService 实例注册到 gRPC Server，注册函数由 protobuf 代码生成。
-    agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentService(settings), server)
+    agent_pb2_grpc.add_AgentServiceServicer_to_server(service or AgentService(settings), server)
     return server
 
 
@@ -216,8 +337,9 @@ def create_server(settings: Settings) -> grpc.Server:
 # 返回值：
 # - 无返回；正常情况下会一直阻塞在 wait_for_termination。
 def serve(settings: Settings) -> None:
+    service = AgentService(settings)
     # 创建并注册服务。
-    server = create_server(settings)
+    server = create_server(settings, service)
     # gRPC 监听地址，例如 0.0.0.0:50051。
     address = f"{settings.host}:{settings.port}"
     # add_insecure_port 表示不启用 TLS，适合本地或内网 MVP。
@@ -225,8 +347,12 @@ def serve(settings: Settings) -> None:
     # 启动服务开始接受请求。
     server.start()
     LOGGER.info("Python Agent protobuf gRPC server listening on %s", address)
-    # 阻塞当前进程，直到收到终止信号。
-    server.wait_for_termination()
+    try:
+        # 阻塞当前进程，直到收到终止信号。
+        server.wait_for_termination()
+    finally:
+        service.close()
+        server.stop(grace=5)
 
 
 # 函数作用：
@@ -259,6 +385,7 @@ def _policy_to_dict(policy: agent_pb2.McpPolicy) -> JsonDict:
 def _log_to_proto(log: dict[str, Any]) -> agent_pb2.McpCallLog:
     # 每个字段都做显式类型转换，避免 None 或非预期类型导致 protobuf 构造失败。
     return agent_pb2.McpCallLog(
+        call_id=str(log.get("call_id", "")),
         run_id=str(log.get("run_id", "")),
         agent_name=str(log.get("agent_name", "")),
         server_name=str(log.get("server_name", "")),

@@ -2,6 +2,17 @@ agent:
   host: 0.0.0.0
   port: 50051
   version: 0.1.0
+limits:
+  grpc_max_workers: 10
+  grpc_max_message_bytes: 4194304
+  max_articles_per_request: 100
+  max_feedback_per_request: 100
+  idempotency_cache_size: 1024
+  mcp_timeout_seconds: 8
+  mcp_max_retries: 2
+  mcp_retry_backoff_seconds: 0.1
+  mcp_circuit_failure_threshold: 3
+  mcp_circuit_reset_seconds: 30
 mock:
   llm: true
   mcp: true
@@ -12,10 +23,56 @@ llm:
     api_key_env: OPENAI_API_KEY
     model: gpt-4.1-mini
   claude:
+    base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY
     model: claude-3-5-sonnet-latest
 mcp:
-  embedding: http://127.0.0.1:7001
-  fetch: http://127.0.0.1:7002
-  milvus: http://127.0.0.1:7003
-  neo4j: http://127.0.0.1:7004
+  memory_fallback: true
+  servers:
+    embedding-mcp:
+      transport: memory
+      url: http://127.0.0.1:7001/mcp
+    fetch-mcp:
+      transport: memory
+      url: http://127.0.0.1:7002/mcp
+    milvus-mcp:
+      transport: memory
+      url: http://127.0.0.1:7003/mcp
+    neo4j-mcp:
+      transport: memory
+      url: http://127.0.0.1:7004/mcp
+recommendation:
+  min_keep_score: 5.0
+  weights:
+    keyword_match: 1.0
+    profile_topic: 1.2
+    milvus_similarity: 1.0
+    neo4j_related_topic: 0.9
+    source_quality: 0.8
+    freshness: 0.7
+    duplicate_penalty: 1.0
+    negative_preference_penalty: 1.0
+    content_quality: 1.1
+  diversity:
+    max_same_source_ratio: 0.5
+    max_same_topic_ratio: 0.5
+    max_consecutive_same_topic: 2
+    topic_window_size: 5
+  freshness:
+    half_life_days: 14
+    max_age_days: 90
+  source_quality:
+    default_score: 6.0
+    sources:
+      arxiv: 8.0
+      github: 7.5
+      huggingface: 7.5
+  milvus:
+    minimum_score: 0.75
+  duplicate:
+    same_url_penalty: 10.0
+    same_title_penalty: 7.0
+    similar_memory_penalty_threshold: 0.92
+  negative_preferences:
+    penalty_per_match: 2.0
+    max_penalty: 6.0

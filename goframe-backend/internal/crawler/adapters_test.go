@@ -120,6 +120,9 @@ func TestFeedAdapterParsesRSSAndAtom(t *testing.T) {
 			if entries[0].SourceContent != tt.wantContent {
 				t.Fatalf("SourceContent = %q, want %q", entries[0].SourceContent, tt.wantContent)
 			}
+			if !strings.Contains(entries[0].RawSourceContent, "<") {
+				t.Fatalf("RawSourceContent = %q, want original markup", entries[0].RawSourceContent)
+			}
 			assertRawPayload(t, entries[0].RawPayload, tt.wantRawMarker)
 		})
 	}

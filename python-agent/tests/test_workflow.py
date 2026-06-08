@@ -15,6 +15,7 @@
 #
 # 初学者阅读建议：
 # 这些测试使用 mock LLM/MCP，目的是验证数据结构和流程，不代表真实外部服务效果。
+import json
 import unittest
 
 import agent_pb2
@@ -61,6 +62,14 @@ class ArticleWorkflowTest(unittest.TestCase):
         self.assertEqual(item["article_id"], "a1")
         self.assertTrue(item["keep"])
         self.assertGreaterEqual(item["score"], 0.5)
+        self.assertEqual(item["rank_position"], 1)
+        self.assertTrue(item["score_breakdown"])
+        self.assertTrue(item["recommendation_reasons"])
+        self.assertEqual(item["rejection_reasons"], [])
+        self.assertEqual(
+            {part["dimension"] for part in item["score_breakdown"]},
+            set(Settings().recommendation.weights),
+        )
         self.assertTrue(item["summary"].startswith("这篇文章"))
         self.assertIn("【知识笔记】", item["post_text"])
         self.assertTrue(item["check_pass"])
@@ -77,7 +86,12 @@ class ArticleWorkflowTest(unittest.TestCase):
             {
                 "run_id": "feedback-run",
                 "user_profile_snapshot": {"feedback_count": "1"},
-                "mcp_policy": {"mock_transport": True, "enable_embedding": True, "enable_neo4j": True},
+                "mcp_policy": {
+                    "mock_transport": True,
+                    "enable_embedding": True,
+                    "enable_milvus": True,
+                    "enable_neo4j": True,
+                },
                 "feedback": [
                     {
                         "feedback_id": "f1",
@@ -94,6 +108,92 @@ class ArticleWorkflowTest(unittest.TestCase):
         self.assertTrue(result["mcp_call_logs"])
         self.assertTrue(all(log["run_id"] == "feedback-run" for log in result["mcp_call_logs"]))
         self.assertTrue(all(log["agent_name"] == "memory" for log in result["mcp_call_logs"]))
+        self.assertTrue(any(log["tool_name"] == "insert_memory_vector" for log in result["mcp_call_logs"]))
+
+    def test_feedback_workflow_returns_structured_feedback(self) -> None:
+        workflow = ArticleWorkflow(Settings(mock_mcp=True))
+        result = workflow.process_feedback(
+            {
+                "run_id": "structured-feedback-run",
+                "user_profile_snapshot": {"feedback_count": "0"},
+                "mcp_policy": {
+                    "mock_transport": True,
+                    "enable_embedding": False,
+                    "enable_milvus": False,
+                    "enable_neo4j": False,
+                },
+                "feedback": [
+                    {
+                        "feedback_id": "f-structured",
+                        "feedback_text": "这篇很有用，希望多保留工程实践细节，不要营销软文，风格更详细一点",
+                        "feedback_type": "text",
+                        "rating": 5,
+                    }
+                ],
+            }
+        )
+
+        structured = result["structured_feedback"]
+        self.assertIn("positive", structured)
+        self.assertIn("negative", structured)
+        self.assertIn("style_preferences", structured)
+        self.assertTrue(structured["positive"])
+        self.assertTrue(structured["style_preferences"])
+        self.assertEqual(result["updated_profile_snapshot"]["last_structured_feedback"][:1], "{")
+
+    def test_memory_agent_clamps_interest_weights_and_keeps_long_term_signal(self) -> None:
+        workflow = ArticleWorkflow(Settings(mock_mcp=True))
+        result = workflow.process_feedback(
+            {
+                "run_id": "weight-clamp-run",
+                "user_profile_snapshot": {
+                    "topics": "{\"AI\":0.95,\"工程实践\":0.60}",
+                    "feedback_count": "0",
+                },
+                "mcp_policy": {"mock_transport": True},
+                "feedback": [
+                    {
+                        "feedback_id": "f-weight",
+                        "feedback_text": "非常有用，希望继续保留工程实践细节",
+                        "rating": 5,
+                    }
+                ],
+            }
+        )
+
+        topics = json.loads(result["updated_profile_snapshot"]["topics"])
+        self.assertGreaterEqual(topics["AI"], 0.80)
+        self.assertLessEqual(topics["工程实践"], 1.0)
+        self.assertGreater(topics["工程实践"], 0.60)
+
+    def test_memory_agent_applies_negative_and_style_feedback_differently(self) -> None:
+        workflow = ArticleWorkflow(Settings(mock_mcp=True))
+        result = workflow.process_feedback(
+            {
+                "run_id": "negative-style-run",
+                "user_profile_snapshot": {
+                    "topics": "{\"营销软文\":0.70}",
+                    "feedback_count": "0",
+                },
+                "mcp_policy": {"mock_transport": True},
+                "feedback": [
+                    {
+                        "feedback_id": "f-negative",
+                        "feedback_text": "不想看营销软文，风格请更详细",
+                        "rating": 1,
+                    }
+                ],
+            }
+        )
+
+        snapshot = result["updated_profile_snapshot"]
+        topics = json.loads(snapshot["topics"])
+        negative_topics = json.loads(snapshot["negative_topics"])
+        style = json.loads(snapshot["style_preferences"])
+        self.assertLess(topics["营销软文"], 0.70)
+        self.assertGreater(negative_topics["营销软文"], 0)
+        self.assertEqual(style["detail_level"], "high")
+        self.assertTrue(result["profile_diff"]["changes"])
 
     # 函数作用：
     # 验证真实 MCP endpoint 不可用时，工作流不会崩溃，而是返回 failed MCP 日志。
@@ -102,6 +202,8 @@ class ArticleWorkflowTest(unittest.TestCase):
         workflow = ArticleWorkflow(
             Settings(
                 mock_mcp=False,
+                mcp_timeout_seconds=0.1,
+                mcp_max_retries=0,
                 mcp_urls={
                     "embedding": "http://127.0.0.1:1",
                     "milvus": "http://127.0.0.1:1",
@@ -110,21 +212,24 @@ class ArticleWorkflowTest(unittest.TestCase):
                 },
             )
         )
-        result = workflow.process_articles(
-            {
-                "run_id": "mcp-failure",
-                "user_profile_snapshot": {"interests": "AI"},
-                "mcp_policy": {"enable_embedding": True, "enable_milvus": True, "enable_neo4j": True},
-                "articles": [
-                    {
-                        "article_id": "a-fail",
-                        "url": "https://example.com/a-fail",
-                        "title": "AI workflow",
-                        "raw_text": "Short but valid article text about AI workflow.",
-                    }
-                ],
-            }
-        )
+        try:
+            result = workflow.process_articles(
+                {
+                    "run_id": "mcp-failure",
+                    "user_profile_snapshot": {"interests": "AI"},
+                    "mcp_policy": {"enable_embedding": True, "enable_milvus": True, "enable_neo4j": True},
+                    "articles": [
+                        {
+                            "article_id": "a-fail",
+                            "url": "https://example.com/a-fail",
+                            "title": "AI workflow",
+                            "raw_text": "Short but valid article text about AI workflow.",
+                        }
+                    ],
+                }
+            )
+        finally:
+            workflow.close()
 
         item = result["results"][0]
         self.assertTrue(item["keep"])
@@ -133,7 +238,7 @@ class ArticleWorkflowTest(unittest.TestCase):
 
     # 函数作用：
     # 验证 FilterAgent 越权调用 fetch_webpage 时，MCPPolicy 会返回 denied 日志。
-    def test_process_articles_returns_permission_denied_log(self) -> None:
+    def test_summary_agent_fetches_missing_content_with_authorized_tool(self) -> None:
         workflow = ArticleWorkflow(Settings(mock_mcp=True))
         result = workflow.process_articles(
             {
@@ -152,7 +257,8 @@ class ArticleWorkflowTest(unittest.TestCase):
         )
 
         logs = result["results"][0]["mcp_call_logs"]
-        self.assertTrue(any(log["tool_name"] == "fetch_webpage" and log["status"] == "denied" for log in logs))
+        self.assertTrue(any(log["tool_name"] == "fetch_webpage" and log["status"] == "success" for log in logs))
+        self.assertFalse(any(log["tool_name"] == "fetch_webpage" and log["agent_name"] == "filter" for log in logs))
         self.assertTrue(result["results"][0]["post_text"] or result["results"][0]["issues"])
 
 
@@ -188,7 +294,81 @@ class AgentServiceTest(unittest.TestCase):
 
         self.assertEqual(response.run_id, "grpc-test")
         self.assertEqual(response.results[0].article_id, "a2")
+        self.assertEqual(response.results[0].rank_position, 1)
+        self.assertTrue(response.results[0].score_breakdown)
+        self.assertTrue(response.results[0].recommendation_reasons)
         self.assertTrue(response.results[0].check_pass)
+
+    def test_process_feedback_reuses_cached_response_for_retry(self) -> None:
+        service = AgentService(Settings(mock_mcp=True))
+        calls = 0
+        original = service.workflow.process_feedback
+
+        def counted(request):
+            nonlocal calls
+            calls += 1
+            return original(request)
+
+        service.workflow.process_feedback = counted
+        request = agent_pb2.ProcessFeedbackRequest(
+            run_id="feedback-idempotent",
+            mcp_policy=agent_pb2.McpPolicy(
+                mock_transport=True,
+                enable_embedding=True,
+                enable_milvus=True,
+                enable_neo4j=True,
+            ),
+            feedback=[
+                agent_pb2.FeedbackItem(
+                    feedback_id="feedback-idempotent-item",
+                    user_id="default-user",
+                    feedback_text="有用",
+                    rating=5,
+                )
+            ],
+        )
+
+        first = service.ProcessFeedback(request, None)
+        second = service.ProcessFeedback(request, None)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            first.SerializeToString(deterministic=True),
+            second.SerializeToString(deterministic=True),
+        )
+
+    def test_protobuf_service_process_feedback_returns_structured_fields(self) -> None:
+        service = AgentService(Settings(mock_mcp=True))
+        response = service.ProcessFeedback(
+            agent_pb2.ProcessFeedbackRequest(
+                run_id="grpc-structured-feedback",
+                mcp_policy=agent_pb2.McpPolicy(mock_transport=True),
+                feedback=[
+                    agent_pb2.FeedbackItem(
+                        feedback_id="f-grpc",
+                        user_id="default-user",
+                        feedback_text="有用，希望保留工程实践细节",
+                        rating=5,
+                    )
+                ],
+            ),
+            None,
+        )
+
+        self.assertTrue(response.structured_feedback_json.startswith("{"))
+        self.assertTrue(response.profile_diff_json.startswith("{"))
+
+    def test_process_articles_rejects_oversized_batch(self) -> None:
+        service = AgentService(Settings(mock_mcp=True, max_articles_per_request=1))
+        request = agent_pb2.ProcessArticlesRequest(
+            run_id="too-many",
+            articles=[
+                agent_pb2.Article(article_id="a1", title="one"),
+                agent_pb2.Article(article_id="a2", title="two"),
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "max_articles_per_request"):
+            service.ProcessArticles(request, None)
 
 
 # 直接运行该测试文件时执行 unittest。

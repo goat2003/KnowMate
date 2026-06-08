@@ -1,11 +1,12 @@
 # fetch-mcp
 
-Minimal JSON-RPC style MCP mock server for webpage fetching and HTML cleanup.
+Official SDK MCP server for webpage fetching and HTML cleanup.
 
 ## Start
 
 ```powershell
 cd D:\projects\KnowMate\knowledge-post-agent\mcp-servers\fetch-mcp
+$env:MCP_TRANSPORT="streamable_http"
 python server.py
 ```
 

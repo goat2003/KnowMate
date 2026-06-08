@@ -55,6 +55,8 @@ DEFAULT_AGENT_TOOL_PERMISSIONS: dict[str, set[str]] = {
     "memory": {
         "embed_text",
         "insert_memory_vector",
+        "batch_insert_memory_vectors",
+        "delete_memory_vectors",
         "search_similar_memory",
         "update_user_interest_graph",
         "query_user_interest_graph",

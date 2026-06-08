@@ -44,9 +44,25 @@ article = agent_pb2.Article.DESCRIPTOR
 for name in ["article_id", "url", "title", "raw_text", "source", "published_at", "tags"]:
     assert name in article.fields_by_name, name
 # 检查 ArticleProcessResult 输出字段。
+breakdown = agent_pb2.ScoreBreakdownItem.DESCRIPTOR
+for name in ["dimension", "available", "raw_score", "normalized_score", "weight", "contribution", "evidence"]:
+    assert name in breakdown.fields_by_name, name
 result = agent_pb2.ArticleProcessResult.DESCRIPTOR
-for name in ["article_id", "keep", "score", "summary", "post_text", "check_pass", "issues", "mcp_call_logs"]:
+for name in [
+    "article_id", "keep", "score", "summary", "post_text", "check_pass",
+    "issues", "mcp_call_logs", "score_breakdown", "recommendation_reasons",
+    "rejection_reasons", "rank_position",
+]:
     assert name in result.fields_by_name, name
+mcp_log = agent_pb2.McpCallLog.DESCRIPTOR
+for name in ["run_id", "agent_name", "server_name", "tool_name", "request_json", "response_json", "status", "error_message", "success", "latency_ms", "call_id"]:
+    assert name in mcp_log.fields_by_name, name
+feedback = agent_pb2.ProcessFeedbackResponse.DESCRIPTOR
+for name in [
+    "run_id", "sentiment", "extracted_feedback", "updated_profile_snapshot",
+    "mcp_call_logs", "structured_feedback_json", "profile_diff_json",
+]:
+    assert name in feedback.fields_by_name, name
 print("python proto contract ok")
 '@ | & $Python -
 Pop-Location
