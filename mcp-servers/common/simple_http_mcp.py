@@ -108,7 +108,7 @@ def create_server(
     async def call_tool(name: str, arguments: JsonDict) -> JsonDict:
         if name not in tool_map:
             raise ToolError(f"unknown tool `{name}`", code=-32601, data={"tool": name})
-        return record_tool(server_name, name, lambda: handler(name, arguments))
+        return await record_tool(server_name, name, lambda: handler(name, arguments))
 
     @server.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_request: Request) -> JSONResponse:

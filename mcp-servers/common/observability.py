@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from typing import Any, TypeVar
 
+from opentelemetry import context as otel_context_api
 from opentelemetry import propagate, trace
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
@@ -31,6 +33,8 @@ _BASIC_AUTH_RE = re.compile(r"(?i)\bBasic\s+[A-Za-z0-9._~+/=-]+")
 _KEY_VALUE_RE = re.compile(
     r"(?i)\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|password|secret|client[_-]?secret|credential)=([^&\s;]+)"
 )
+_MYSQL_DSN_RE = re.compile(r"(?i)\b(mysql(?:\+\w+)?://[^:\s/@]+:)([^@\s]+)(@)")
+_MYSQL_GO_DSN_RE = re.compile(r"(?i)\b([A-Za-z0-9_.-]+:)([^@\s]+)(@tcp\()")
 
 T = TypeVar("T")
 
@@ -63,7 +67,7 @@ def redact_sensitive(value: Any) -> Any:
     return value
 
 
-def extract_trace_context(headers: dict[str, str]) -> Any:
+def extract_trace_context(headers: dict[str, str]) -> otel_context_api.Context:
     return propagate.extract(headers)
 
 
@@ -106,22 +110,31 @@ class Metrics:
 METRICS = Metrics()
 
 
-def record_tool(server_name: str, tool_name: str, handler: Callable[[], T]) -> T:
+async def record_tool(
+    server_name: str,
+    tool_name: str,
+    handler: Callable[[], T | Awaitable[T]],
+    context: otel_context_api.Context | None = None,
+) -> T:
     started = time.perf_counter()
     tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span(f"mcp.tool.{tool_name}") as span:
+    status = "failed"
+    with tracer.start_as_current_span(f"mcp.tool.{tool_name}", context=context) as span:
         span.set_attribute("mcp.server", server_name)
         span.set_attribute("mcp.tool", tool_name)
         try:
             result = handler()
+            if isawaitable(result):
+                result = await result
+            status = "success"
+            return result
         except Exception as exc:
             span.record_exception(exc)
             span.set_attribute("mcp.status", "failed")
-            METRICS.record_tool_call(server_name, tool_name, "failed", time.perf_counter() - started)
             raise
-        span.set_attribute("mcp.status", "success")
-        METRICS.record_tool_call(server_name, tool_name, "success", time.perf_counter() - started)
-        return result
+        finally:
+            span.set_attribute("mcp.status", status)
+            METRICS.record_tool_call(server_name, tool_name, status, time.perf_counter() - started)
 
 
 def _is_sensitive_key(key: Any) -> bool:
@@ -141,6 +154,8 @@ def _is_sensitive_pair(value: list[Any] | tuple[Any, ...]) -> bool:
 def _redact_string(value: str) -> str:
     value = _BEARER_RE.sub(f"Bearer {_REDACTED}", value)
     value = _BASIC_AUTH_RE.sub(f"Basic {_REDACTED}", value)
+    value = _MYSQL_DSN_RE.sub(rf"\1{_REDACTED}\3", value)
+    value = _MYSQL_GO_DSN_RE.sub(rf"\1{_REDACTED}\3", value)
     return _KEY_VALUE_RE.sub(lambda match: f"{match.group(1)}={_REDACTED}", value)
 
 
