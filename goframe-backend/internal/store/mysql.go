@@ -351,6 +351,92 @@ func (s *Store) ListPosts(ctx context.Context, limit int) ([]model.Post, error) 
 	return posts, rows.Err()
 }
 
+func (s *Store) PostByID(ctx context.Context, postID string) (model.Post, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return model.Post{}, err
+	}
+	var post model.Post
+	var tagsRaw string
+	var metadataRaw string
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT post_uid, article_uid, title, markdown, status,
+		        COALESCE(CAST(tags AS CHAR), '[]'), COALESCE(CAST(metadata AS CHAR), '{}'), created_at
+		   FROM posts
+		  WHERE post_uid = ?
+		  LIMIT 1`,
+		postID,
+	).Scan(&post.PostUID, &post.ArticleUID, &post.Title, &post.Markdown, &post.Status, &tagsRaw, &metadataRaw, &post.CreatedAt)
+	if err != nil {
+		return model.Post{}, err
+	}
+	_ = json.Unmarshal([]byte(tagsRaw), &post.Tags)
+	post.Metadata = map[string]any{}
+	_ = json.Unmarshal([]byte(metadataRaw), &post.Metadata)
+	return post, nil
+}
+
+func (s *Store) ListArticles(ctx context.Context, filter model.ArticleFilter) ([]model.Article, error) {
+	limit := normalizedLimit(filter.Limit)
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT article_uid, source, source_type, url, COALESCE(normalized_url, ''), COALESCE(url_hash, ''),
+	                 title, normalized_title, COALESCE(title_hash, ''), COALESCE(content, ''),
+	                 COALESCE(raw_content, ''), COALESCE(clean_content, ''), COALESCE(content_hash, ''),
+	                 language, author, COALESCE(DATE_FORMAT(published_at, '%Y-%m-%dT%TZ'), ''),
+	                 COALESCE(CAST(tags AS CHAR), '[]'), fetch_status, fetch_error_type,
+	                 COALESCE(fetch_error, ''), COALESCE(http_status, 0), COALESCE(CAST(raw_payload AS CHAR), '{}'),
+	                 fetched_at, created_at
+	            FROM articles`
+	where := make([]string, 0)
+	args := make([]any, 0)
+	if filter.Source != "" {
+		where = append(where, "source = ?")
+		args = append(args, filter.Source)
+	}
+	if filter.SourceType != "" {
+		where = append(where, "source_type = ?")
+		args = append(args, filter.SourceType)
+	}
+	if filter.Status != "" {
+		where = append(where, "fetch_status = ?")
+		args = append(args, filter.Status)
+	}
+	if filter.Language != "" {
+		where = append(where, "language = ?")
+		args = append(args, filter.Language)
+	}
+	if filter.Query != "" {
+		where = append(where, "(article_uid LIKE ? OR title LIKE ? OR url LIKE ?)")
+		like := "%" + filter.Query + "%"
+		args = append(args, like, like, like)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	articles := make([]model.Article, 0)
+	for rows.Next() {
+		article, err := scanArticle(rows)
+		if err != nil {
+			return nil, err
+		}
+		articles = append(articles, article)
+	}
+	return articles, rows.Err()
+}
+
 func (s *Store) RecommendationExplanationByPostID(ctx context.Context, postID string) (model.RecommendationExplanation, error) {
 	db, err := s.open(ctx)
 	if err != nil {
@@ -691,6 +777,70 @@ func (s *Store) ListRunLogs(ctx context.Context, limit int) ([]model.RunLog, err
 		// metadata 解析失败时忽略，避免单条脏数据导致整个列表接口失败。
 		_ = json.Unmarshal([]byte(metadataRaw), &run.Metadata)
 		logs = append(logs, run)
+	}
+	return logs, rows.Err()
+}
+
+func (s *Store) ListMcpCallLogs(ctx context.Context, filter model.McpCallLogFilter) ([]model.McpCallLog, error) {
+	limit := normalizedLimit(filter.Limit)
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT call_id, run_id, agent_name, server_name, tool_name,
+	                 COALESCE(CAST(request_json AS CHAR), '{}'), COALESCE(CAST(response_json AS CHAR), '{}'),
+	                 status, COALESCE(error_message, ''), success, latency_ms, created_at
+	            FROM mcp_call_logs`
+	where := make([]string, 0)
+	args := make([]any, 0)
+	if filter.RunID != "" {
+		where = append(where, "run_id = ?")
+		args = append(args, filter.RunID)
+	}
+	if filter.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, filter.Status)
+	}
+	if filter.ServerName != "" {
+		where = append(where, "server_name = ?")
+		args = append(args, filter.ServerName)
+	}
+	if filter.ToolName != "" {
+		where = append(where, "tool_name = ?")
+		args = append(args, filter.ToolName)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs := make([]model.McpCallLog, 0)
+	for rows.Next() {
+		var log model.McpCallLog
+		if err := rows.Scan(
+			&log.CallID,
+			&log.RunID,
+			&log.AgentName,
+			&log.ServerName,
+			&log.ToolName,
+			&log.RequestJSON,
+			&log.ResponseJSON,
+			&log.Status,
+			&log.ErrorMessage,
+			&log.Success,
+			&log.LatencyMS,
+			&log.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
 	}
 	return logs, rows.Err()
 }
@@ -1589,6 +1739,47 @@ func scanUserProfileSnapshot(row rowScanner) (model.UserProfileSnapshot, error) 
 	return snapshot, nil
 }
 
+func scanArticle(row rowScanner) (model.Article, error) {
+	var article model.Article
+	var tagsRaw string
+	var rawPayload string
+	var fetchedAt sql.NullTime
+	if err := row.Scan(
+		&article.ID,
+		&article.Source,
+		&article.SourceType,
+		&article.URL,
+		&article.NormalizedURL,
+		&article.URLHash,
+		&article.Title,
+		&article.NormalizedTitle,
+		&article.TitleHash,
+		&article.Content,
+		&article.RawContent,
+		&article.CleanContent,
+		&article.ContentHash,
+		&article.Language,
+		&article.Author,
+		&article.PublishedAt,
+		&tagsRaw,
+		&article.FetchStatus,
+		&article.FetchErrorType,
+		&article.FetchError,
+		&article.HTTPStatus,
+		&rawPayload,
+		&fetchedAt,
+		&article.CreatedAt,
+	); err != nil {
+		return model.Article{}, err
+	}
+	_ = json.Unmarshal([]byte(tagsRaw), &article.Tags)
+	_ = json.Unmarshal([]byte(rawPayload), &article.RawPayload)
+	if fetchedAt.Valid {
+		article.FetchedAt = fetchedAt.Time
+	}
+	return article, nil
+}
+
 func scanTaskRun(row rowScanner) (model.TaskRun, error) {
 	var task model.TaskRun
 	var inputPayload string
@@ -1670,6 +1861,13 @@ func nonNilMap(value map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return value
+}
+
+func normalizedLimit(limit int) int {
+	if limit <= 0 || limit > 100 {
+		return 20
+	}
+	return limit
 }
 
 // 函数作用：

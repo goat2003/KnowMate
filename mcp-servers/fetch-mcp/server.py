@@ -21,12 +21,14 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+import ipaddress
 import os
 from pathlib import Path
 import re
+import socket
 import sys
 from urllib import request as urlrequest
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 
 # 将公共 MCP 框架加入导入路径。
@@ -40,6 +42,13 @@ CONFIG = {
     "mock_mode": os.getenv("FETCH_MOCK_MODE", "true").lower() != "false",
     "real_fetch_proxy": os.getenv("REAL_FETCH_PROXY", ""),
     "timeout_seconds": int(os.getenv("FETCH_TIMEOUT_SECONDS", "5")),
+    "max_response_bytes": int(os.getenv("FETCH_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
+}
+
+BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal"}
+BLOCKED_IPS = {
+    ipaddress.ip_address("169.254.169.254"),
+    ipaddress.ip_address("fd00:ec2::254"),
 }
 
 # TOOLS 声明 fetch-mcp 对外提供的工具及其输入输出结构。
@@ -128,8 +137,10 @@ def _fetch(url: str) -> dict[str, object]:
         # User-Agent 标记调用来源，避免某些站点拒绝默认 Python UA。
         req = urlrequest.Request(url, headers={"User-Agent": "knowledge-post-agent-fetch-mcp/0.1"})
         # with 自动关闭响应对象。
-        with urlrequest.urlopen(req, timeout=CONFIG["timeout_seconds"]) as response:
-            html = response.read().decode("utf-8", errors="replace")
+        with _safe_urlopen(req) as response:
+            html = response.read(CONFIG["max_response_bytes"] + 1).decode("utf-8", errors="replace")
+            if len(html.encode("utf-8")) > CONFIG["max_response_bytes"]:
+                raise ToolError("fetch response body too large", data={"url": url})
             return {"url": url, "status_code": response.status, "html": html, "raw_text": _clean_text(html), "mock": False}
     except URLError as exc:
         # 抓取失败转换为 ToolError，由 MCP SDK 返回标准工具错误。
@@ -151,7 +162,7 @@ def _check_alive(url: str) -> dict[str, object]:
     # 真实模式使用 HEAD 请求降低流量。
     try:
         req = urlrequest.Request(url, method="HEAD", headers={"User-Agent": "knowledge-post-agent-fetch-mcp/0.1"})
-        with urlrequest.urlopen(req, timeout=CONFIG["timeout_seconds"]) as response:
+        with _safe_urlopen(req) as response:
             return {"url": url, "alive": response.status < 400, "status_code": response.status, "mock": False}
     except Exception as exc:
         # URL 不可访问时不抛错，而是返回 alive=False，便于校验流程继续。
@@ -164,9 +175,55 @@ def _valid_url(url: str) -> str:
     # urlparse 解析 scheme、host、path 等部分。
     parsed = urlparse(url)
     # 只允许 http/https 且必须有 netloc。
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         raise ToolError("`url` must be an absolute http(s) URL", data={"url": url})
+    if parsed.username or parsed.password:
+        raise ToolError("`url` must not include userinfo", data={"url": url})
+    _validate_public_hostname(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
     return url
+
+
+def _validate_public_hostname(hostname: str, port: int) -> None:
+    host = hostname.strip().strip("[]").lower().rstrip(".")
+    if host in BLOCKED_HOSTNAMES:
+        raise ToolError("`url` host is not allowed", data={"host": hostname})
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise ToolError("failed to resolve url host", data={"host": hostname}) from exc
+        addresses = []
+        for info in infos:
+            sockaddr = info[4]
+            if sockaddr:
+                addresses.append(ipaddress.ip_address(sockaddr[0]))
+    for address in addresses:
+        if _is_blocked_ip(address):
+            raise ToolError("`url` host resolves to a blocked address", data={"host": hostname, "ip": str(address)})
+
+
+def _is_blocked_ip(address: ipaddress._BaseAddress) -> bool:
+    return (
+        address in BLOCKED_IPS
+        or address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+class _NoRedirectHandler(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise HTTPError(req.full_url, code, "redirect blocked by SSRF policy", headers, fp)
+
+
+def _safe_urlopen(req: urlrequest.Request):
+    opener = urlrequest.build_opener(_NoRedirectHandler)
+    return opener.open(req, timeout=CONFIG["timeout_seconds"])
 
 
 # 函数作用：

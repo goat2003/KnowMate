@@ -1,5 +1,7 @@
 param(
-  [switch]$KeepServices
+  [switch]$KeepServices,
+  [switch]$IncludeObservability,
+  [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,8 +29,17 @@ function Wait-HttpJson {
 
 Push-Location $Root
 try {
-  docker compose up -d --build
-  if ($LASTEXITCODE -ne 0) { throw "docker compose up -d --build failed" }
+  $services = @("mysql", "embedding-mcp", "fetch-mcp", "milvus-mcp", "neo4j-mcp", "python-agent", "goframe-backend")
+  if ($IncludeObservability) {
+    $services += @("jaeger", "otel-collector", "alertmanager", "prometheus", "grafana")
+  }
+  $composeArgs = @("up", "-d")
+  if (-not $SkipBuild) {
+    $composeArgs += "--build"
+  }
+  $composeArgs += $services
+  docker compose @composeArgs
+  if ($LASTEXITCODE -ne 0) { throw "docker compose $($composeArgs -join ' ') failed" }
 
   $health = Wait-HttpJson "http://127.0.0.1:8080/health"
   Assert-True ($health.agent.status -eq "SERVING") "Python Agent health is not SERVING"

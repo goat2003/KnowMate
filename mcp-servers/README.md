@@ -42,6 +42,17 @@ Credentials come from environment variables or mounted secret files:
 Every HTTP server exposes `/health`. Production dependency failures return
 HTTP `503` but do not terminate the MCP process.
 
+## Fetch SSRF Guard
+
+`fetch-mcp` only accepts absolute `http` and `https` URLs. It rejects userinfo,
+localhost, private networks, link-local ranges, cloud metadata hosts such as
+`169.254.169.254` and `metadata.google.internal`, and DNS names that resolve to
+blocked addresses. Redirects are blocked and response bodies are capped by
+`FETCH_MAX_RESPONSE_BYTES`.
+
+File and mail style MCP tools are treated as high risk by Python Agent policy
+and are disabled by default. See `SECURITY.md` before enabling them.
+
 ## Tests
 
 ```powershell

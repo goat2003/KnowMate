@@ -48,8 +48,9 @@ type Config struct {
 	// RSS 是 RSS 源列表配置。
 	RSS RSSConfig `yaml:"rss"`
 	// Crawler 控制抓取数量。
-	Crawler CrawlerConfig `yaml:"crawler"`
-	Harness HarnessConfig `yaml:"harness"`
+	Crawler  CrawlerConfig  `yaml:"crawler"`
+	Security SecurityConfig `yaml:"security"`
+	Harness  HarnessConfig  `yaml:"harness"`
 	// Output 控制 Markdown 输出目录。
 	Output OutputConfig `yaml:"output"`
 	// Profile 保存默认用户画像配置。
@@ -69,7 +70,14 @@ type AgentConfig struct {
 	// TimeoutSeconds 是每次 gRPC 连接和调用的超时时间。
 	TimeoutSeconds int `yaml:"timeout_seconds"`
 	// RetryTimes 是调用 Python Agent 失败后的重试次数。
-	RetryTimes int `yaml:"retry_times"`
+	RetryTimes int    `yaml:"retry_times"`
+	AuthToken  string `yaml:"auth_token"`
+}
+
+type SecurityConfig struct {
+	APIToken            string `yaml:"api_token"`
+	MaxRequestBodyBytes int64  `yaml:"max_request_body_bytes"`
+	RateLimitBurst      int    `yaml:"rate_limit_burst"`
 }
 
 // MySQLConfig 保存 MySQL DSN。
@@ -177,6 +185,7 @@ func Load(ctx context.Context) Config {
 	// 以下环境变量用于部署时覆盖关键配置，不需要改动配置文件。
 	cfg.Server.Address = envOrDefault("GOFRAME_HTTP_ADDR", cfg.Server.Address)
 	cfg.Agent.Address = envOrDefault("AGENT_GRPC_ADDR", cfg.Agent.Address)
+	cfg.Agent.AuthToken = envOrDefault("AGENT_GRPC_AUTH_TOKEN", cfg.Agent.AuthToken)
 	cfg.MySQL.DSN = envOrDefault("MYSQL_DSN", cfg.MySQL.DSN)
 	cfg.Schema.Path = envOrDefault("SCHEMA_PATH", cfg.Schema.Path)
 	cfg.Output.Dir = envOrDefault("OUTPUT_DIR", cfg.Output.Dir)
@@ -207,6 +216,10 @@ func Load(ctx context.Context) Config {
 	overrideInt("HARNESS_STEP_MAX_RETRIES", &cfg.Harness.StepMaxRetries)
 	overrideInt("HARNESS_RETRY_BACKOFF_MILLISECONDS", &cfg.Harness.RetryBackoffMilliseconds)
 	overrideInt("HARNESS_MAX_RETRY_DELAY_MILLISECONDS", &cfg.Harness.MaxRetryDelayMilliseconds)
+	cfg.Security.APIToken = envOrDefault("GOFRAME_API_TOKEN", cfg.Security.APIToken)
+	cfg.Security.APIToken = envOrDefault("API_TOKEN", cfg.Security.APIToken)
+	overrideInt64("GOFRAME_MAX_REQUEST_BODY_BYTES", &cfg.Security.MaxRequestBodyBytes)
+	overrideInt("GOFRAME_RATE_LIMIT_BURST", &cfg.Security.RateLimitBurst)
 	// Normalize 补齐空值和非法值。
 	return cfg.Normalize()
 }
@@ -235,6 +248,12 @@ func (c Config) Normalize() Config {
 	// 重试次数必须为正数。
 	if c.Agent.RetryTimes <= 0 {
 		c.Agent.RetryTimes = 3
+	}
+	if c.Security.MaxRequestBodyBytes <= 0 {
+		c.Security.MaxRequestBodyBytes = 1 * 1024 * 1024
+	}
+	if c.Security.RateLimitBurst <= 0 {
+		c.Security.RateLimitBurst = 120
 	}
 	if c.Crawler.UserAgent == "" {
 		c.Crawler.UserAgent = "KnowMateCrawler/1.0"
@@ -323,6 +342,10 @@ func defaults() Config {
 			Address:        "127.0.0.1:50051",
 			TimeoutSeconds: 8,
 			RetryTimes:     3,
+		},
+		Security: SecurityConfig{
+			MaxRequestBodyBytes: 1 * 1024 * 1024,
+			RateLimitBurst:      120,
 		},
 		MySQL: MySQLConfig{
 			DSN: "app:apppass@tcp(127.0.0.1:3306)/knowledge_post_agent?charset=utf8mb4&parseTime=true&loc=Local",

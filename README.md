@@ -4,6 +4,8 @@ MVP monorepo for a personalized knowledge-post summarization assistant built aro
 
 The current focus is a runnable Python Agent Service using `grpcio + protobuf`. LLM, MCP, Milvus, and Neo4j behavior is mocked by default.
 
+Security hardening notes are in [SECURITY.md](D:/projects/KnowMate/knowledge-post-agent/SECURITY.md). In production, set `GOFRAME_API_TOKEN` for the HTTP API and `AGENT_GRPC_AUTH_TOKEN` on both GoFrame and Python Agent so gRPC calls are authenticated.
+
 ## Layout
 
 ```text
@@ -415,7 +417,7 @@ Allowed tools:
 - `check`: `fetch_webpage`, `check_url_alive`, `search_similar_memory`, `semantic_deduplicate`
 - `feedback`: `embed_text`, `search_similar_memory`
 - `memory`: `embed_text`, `insert_memory_vector`, `search_similar_memory`, `update_user_interest_graph`, `query_user_interest_graph`, `get_related_topics`
-- `output`: `save_markdown`, `generate_daily_report`, `generate_weekly_report`, `send_email`
+- `output`: none by default. High-risk tools such as `save_markdown`, `generate_daily_report`, `generate_weekly_report`, and `send_email` require an explicit `MCPPolicy(..., high_risk_allowlist={...})` opt-in.
 
 Unauthorized calls are not sent to MCP transport. They return a structured error:
 
@@ -473,6 +475,39 @@ python server.py
 For local development without subprocesses or network services, keep every server transport set to `memory`. `MCP_MEMORY_FALLBACK=true` additionally allows remote failures to degrade to the in-process memory implementation.
 
 ## Tests
+
+## 本地测试与 CI 质量门禁
+
+推荐先安装运行依赖和开发门禁依赖：
+
+```powershell
+python -m pip install -r .\python-agent\requirements.txt -r .\mcp-servers\requirements.txt -r .\requirements-dev.txt
+```
+
+本地完整门禁入口：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quality_gate.ps1
+```
+
+没有 Docker、MySQL 或漏洞扫描工具时，可以先跑轻量门禁：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\quality_gate.ps1 -SkipDocker -SkipIntegration -SkipE2E -SkipVulnerabilityScan
+```
+
+门禁覆盖以下测试层级：
+
+- Go 单元测试：`go test ./... -coverprofile`，并运行 `go fmt` 与 `go vet`。
+- Python 单元测试：`pytest python-agent/tests mcp-servers/tests --cov`，并运行 `ruff check` 与 `mypy`。
+- MCP Tool 契约测试：`python-agent/tests/test_mcp_client.py`、`python-agent/tests/test_mcp_policy.py`、`mcp-servers/tests/test_http_mcp.py`、`mcp-servers/tests/test_fetch_security.py` 覆盖工具发现、权限拒绝、Schema、重试、熔断、fallback 和安全策略。
+- gRPC 协议兼容测试：`scripts\check_proto_contract.ps1` 检查 `shared/proto/agent.proto`、`proto/agent.proto`、Python stub 和 Go `agentpb` 契约。
+- MySQL、Milvus、Neo4j 集成测试：`scripts\verify_migrations.ps1 -RequireDatabase` 验证 MySQL migration；`scripts\integration_test.ps1 -RealMemoryServices` 启动 Docker-backed Milvus 与 Neo4j 测试。
+- 端到端测试：`scripts\smoke_e2e.ps1` 通过 Docker Compose 启动 MySQL、MCP、Python Agent、GoFrame，并调用 `/runs/articles` 验证数据库和 Markdown 输出。
+- 故障注入测试：现有 Python MCP client timeout/retry/circuit/fallback、LLM fallback、Crawler 临时失败与 robots 失败用例会随单元测试运行。
+- 基准测试：`scripts\run_benchmarks.ps1` 运行 Go benchmark 和 Python 推荐排序 benchmark smoke。
+
+CI 质量门禁位于 `.github/workflows/ci.yml`，Pull Request 和 `main` push 会执行 Go/Python 质量检查、Proto 一致性、migration 验证、Docker 镜像构建、依赖漏洞扫描、覆盖率报告上传和 E2E smoke test。测试失败时 CI 必须失败；禁止提交未同步的 Proto 生成代码；禁止提交明显密钥，`scripts\check_secrets.py` 会阻止明显真实密钥、private key 和常见云/平台 token 进入提交。
 
 ```powershell
 cd D:\projects\KnowMate\knowledge-post-agent\python-agent

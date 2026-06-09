@@ -26,10 +26,13 @@ import (
 	"context"
 	// encoding/json 用于解析 POST /feedback 的 JSON 请求体。
 	"encoding/json"
+	"errors"
+	"net/http"
 	// strconv 用于把 query 参数 limit 转成 int。
 	"strconv"
 
 	"knowledge-post-agent/goframe-backend/internal/agentpb"
+	"knowledge-post-agent/goframe-backend/internal/config"
 	// harness 是业务编排层，负责调用 RSS、MySQL、Python gRPC 和 Markdown 输出。
 	"knowledge-post-agent/goframe-backend/internal/logic/harness"
 	"knowledge-post-agent/goframe-backend/internal/model"
@@ -49,13 +52,17 @@ type Handler struct {
 	// store 用于健康检查、查询 posts 和 run_logs。
 	store handlerStore
 	// harness 用于执行完整文章任务和反馈任务。
-	harness handlerRunner
+	harness  handlerRunner
+	security *securityMiddleware
 }
 
 type handlerStore interface {
 	Ping(context.Context) error
+	ListArticles(context.Context, model.ArticleFilter) ([]model.Article, error)
 	ListPosts(context.Context, int) ([]model.Post, error)
+	PostByID(context.Context, string) (model.Post, error)
 	ListRunLogs(context.Context, int) ([]model.RunLog, error)
+	ListMcpCallLogs(context.Context, model.McpCallLogFilter) ([]model.McpCallLog, error)
 	ListTaskRuns(context.Context, model.TaskRunFilter) ([]model.TaskRun, error)
 	TaskRun(context.Context, string) (model.TaskRun, error)
 	ListTaskSteps(context.Context, string) ([]model.TaskStep, error)
@@ -85,13 +92,21 @@ type handlerRunner interface {
 //
 // 返回值：
 // - 返回 *Handler。
-func New(store *store.Store, runner *harness.Harness) *Handler {
+func New(store *store.Store, runner *harness.Harness, security ...config.SecurityConfig) *Handler {
 	// 使用结构体字面量保存依赖，后续方法通过接收者 h 访问。
-	return &Handler{store: store, harness: runner}
+	h := &Handler{store: store, harness: runner}
+	if len(security) > 0 {
+		h.SetSecurityConfig(security[0])
+	}
+	return h
 }
 
 func NewWithDependencies(store handlerStore, runner handlerRunner) *Handler {
 	return &Handler{store: store, harness: runner}
+}
+
+func (h *Handler) SetSecurityConfig(cfg config.SecurityConfig) {
+	h.security = newSecurityMiddleware(cfg)
 }
 
 // 函数作用：
@@ -107,6 +122,9 @@ func NewWithDependencies(store handlerStore, runner handlerRunner) *Handler {
 // - 被 main.go 调用。
 func (h *Handler) Register(server *ghttp.Server) {
 	server.Use(observability.GoFrameTraceMiddleware("goframe-backend"))
+	if h.security != nil {
+		server.Use(h.security.Handle)
+	}
 	// Group("/") 表示以下路由都挂在根路径下。
 	server.Group("/", func(group *ghttp.RouterGroup) {
 		// GET /health 同时检查数据库和 Python Agent。
@@ -116,11 +134,14 @@ func (h *Handler) Register(server *ghttp.Server) {
 		group.POST("/runs/articles", h.RunArticles)
 		// POST /feedback 接收用户反馈并触发画像更新。
 		group.POST("/feedback", h.Feedback)
+		group.GET("/articles", h.ListArticles)
 		// GET /posts 查询最近生成的推文/知识笔记。
 		group.GET("/posts", h.ListPosts)
+		group.GET("/posts/{post_uid}", h.GetPost)
 
 		// GET /run-logs 查询最近任务运行日志。
 		group.GET("/run-logs", h.ListRunLogs)
+		group.GET("/mcp-call-logs", h.ListMcpCallLogs)
 		group.GET("/runs", h.ListRuns)
 		group.GET("/runs/{run_id}", h.GetRun)
 		group.POST("/runs/{run_id}/cancel", h.CancelRun)
@@ -227,6 +248,23 @@ func (h *Handler) Feedback(r *ghttp.Request) {
 	})
 }
 
+func (h *Handler) ListArticles(r *ghttp.Request) {
+	filter := model.ArticleFilter{
+		Source:     r.GetQuery("source").String(),
+		SourceType: r.GetQuery("source_type").String(),
+		Status:     r.GetQuery("status").String(),
+		Language:   r.GetQuery("language").String(),
+		Query:      r.GetQuery("q").String(),
+		Limit:      queryLimit(r),
+	}
+	items, err := h.store.ListArticles(r.Context(), filter)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "items": items})
+}
+
 // 函数作用：
 // 查询最近生成的 posts。
 //
@@ -246,6 +284,20 @@ func (h *Handler) ListPosts(r *ghttp.Request) {
 	r.Response.WriteJson(g.Map{"ok": true, "items": posts})
 }
 
+func (h *Handler) GetPost(r *ghttp.Request) {
+	postID := r.Get("post_uid").String()
+	if postID == "" {
+		r.Response.WriteJson(g.Map{"ok": false, "error": "post_uid is required"})
+		return
+	}
+	post, err := h.store.PostByID(r.Context(), postID)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "post": post})
+}
+
 // 函数作用：
 // 查询最近运行日志。
 //
@@ -262,6 +314,22 @@ func (h *Handler) ListRunLogs(r *ghttp.Request) {
 		return
 	}
 	r.Response.WriteJson(g.Map{"ok": true, "items": logs})
+}
+
+func (h *Handler) ListMcpCallLogs(r *ghttp.Request) {
+	filter := model.McpCallLogFilter{
+		RunID:      r.GetQuery("run_id").String(),
+		Status:     r.GetQuery("status").String(),
+		ServerName: firstNonEmpty(r.GetQuery("server_name").String(), r.GetQuery("server").String()),
+		ToolName:   firstNonEmpty(r.GetQuery("tool_name").String(), r.GetQuery("tool").String()),
+		Limit:      queryLimit(r),
+	}
+	items, err := h.store.ListMcpCallLogs(r.Context(), filter)
+	if err != nil {
+		r.Response.WriteJson(g.Map{"ok": false, "error": err.Error()})
+		return
+	}
+	r.Response.WriteJson(g.Map{"ok": true, "items": items})
 }
 
 func (h *Handler) ListRuns(r *ghttp.Request) {
@@ -403,6 +471,11 @@ func decodeJSON(r *ghttp.Request, target any) bool {
 	// 使用标准库 JSON decoder 解析请求体。
 	decoder := json.NewDecoder(r.Request.Body)
 	if err := decoder.Decode(target); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			r.Response.WriteStatusExit(http.StatusRequestEntityTooLarge, g.Map{"ok": false, "error": "request body too large"})
+			return false
+		}
 		// JSON 格式错误时返回明确错误，避免进入业务层。
 		r.Response.WriteJson(g.Map{"ok": false, "error": "invalid json: " + err.Error()})
 		return false
@@ -426,4 +499,13 @@ func queryLimit(r *ghttp.Request) int {
 		return 20
 	}
 	return limit
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -24,13 +24,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from app.recommendation import RecommendationSettings
 
 # yaml 是可选依赖；缺失时仍允许模块导入，便于只做语法检查或部分单元测试。
+yaml: ModuleType | None
 try:
-    import yaml
+    import yaml as _yaml
+
+    yaml = _yaml
 except ImportError:  # pragma: no cover - keeps compile/import usable before deps install
     # 没有安装 PyYAML 时设置为 None，_read_yaml 会返回空配置。
     yaml = None
@@ -134,6 +138,7 @@ class Settings:
     metrics_port: int = 9101
     # version 会在 HealthCheck 响应中返回。
     version: str = "0.1.0"
+    api_token: str = ""
     # mock_llm 表示是否使用 mock LLM provider。
     mock_llm: bool = True
     # mock_mcp 是旧配置兼容开关；新配置优先使用每个 server 的 transport。
@@ -195,6 +200,7 @@ def load_settings() -> Settings:
         metrics_host=os.getenv("METRICS_HOST", agent.get("metrics_host", "0.0.0.0")),
         metrics_port=int(os.getenv("METRICS_PORT", agent.get("metrics_port", 9101))),
         version=os.getenv("AGENT_VERSION", agent.get("version", "0.1.0")),
+        api_token=os.getenv("AGENT_GRPC_AUTH_TOKEN", agent.get("api_token", "")),
         # mock_llm 由最终 provider 是否为 mock 推导，避免 YAML 和实际 provider 不一致。
         mock_llm=llm_settings.provider == "mock",
         # MOCK_MCP 环境变量优先，其次使用 config.yaml 中 mock.mcp，最后默认 True。

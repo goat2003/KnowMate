@@ -233,6 +233,15 @@ type TaskRunFilter struct {
 	Limit    int    `json:"limit"`
 }
 
+type ArticleFilter struct {
+	Source     string `json:"source"`
+	SourceType string `json:"source_type"`
+	Status     string `json:"status"`
+	Language   string `json:"language"`
+	Query      string `json:"q"`
+	Limit      int    `json:"limit"`
+}
+
 type CrawlSourceRun struct {
 	RunID        string     `json:"run_id"`
 	SourceName   string     `json:"source_name"`
@@ -272,5 +281,14 @@ type McpCallLog struct {
 	// Success 是布尔成功标记。
 	Success bool `json:"success"`
 	// LatencyMS 是调用耗时毫秒数。
-	LatencyMS int64 `json:"latency_ms"`
+	LatencyMS int64     `json:"latency_ms"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type McpCallLogFilter struct {
+	RunID      string `json:"run_id"`
+	Status     string `json:"status"`
+	ServerName string `json:"server_name"`
+	ToolName   string `json:"tool_name"`
+	Limit      int    `json:"limit"`
 }

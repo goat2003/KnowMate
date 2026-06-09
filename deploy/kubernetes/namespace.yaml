@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: knowmate
+  labels:
+    app.kubernetes.io/name: knowmate
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: knowmate-runtime
+  namespace: knowmate

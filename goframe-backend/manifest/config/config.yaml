@@ -5,6 +5,12 @@ agent:
   address: "127.0.0.1:50051"
   timeout_seconds: 8
   retry_times: 3
+  auth_token: ""
+
+security:
+  api_token: ""
+  max_request_body_bytes: 1048576
+  rate_limit_burst: 120
 
 mysql:
   dsn: "app:apppass@tcp(127.0.0.1:3306)/knowledge_post_agent?charset=utf8mb4&parseTime=true&loc=Local"

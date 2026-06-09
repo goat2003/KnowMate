@@ -1,0 +1,315 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-knowledge_post_agent}
+      MYSQL_USER: ${MYSQL_USER:-app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./shared/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  migration-runner:
+    build:
+      context: .
+      dockerfile: goframe-backend/Dockerfile
+    restart: "no"
+    entrypoint: ["/app/scripts/run_migrations.sh"]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-knowledge_post_agent}
+      MYSQL_USER: ${MYSQL_USER:-app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      INIT_SQL: /app/shared/sql/init.sql
+      MIGRATION_DIR: /app/shared/sql/migrations
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  embedding-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_SERVER: embedding-mcp
+      MCP_TRANSPORT: streamable_http
+      PORT: 7001
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-3072}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-embedding-mcp
+    expose: ["7001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  fetch-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_SERVER: fetch-mcp
+      MCP_TRANSPORT: streamable_http
+      PORT: 7002
+      FETCH_MOCK_MODE: ${FETCH_MOCK_MODE:-false}
+      FETCH_MAX_RESPONSE_BYTES: ${FETCH_MAX_RESPONSE_BYTES:-2097152}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-fetch-mcp
+    expose: ["7002"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7002/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  milvus-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_SERVER: milvus-mcp
+      MCP_TRANSPORT: streamable_http
+      PORT: 7003
+      MILVUS_PROVIDER: ${MILVUS_PROVIDER:-milvus}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus-standalone:19530}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-user_memory_vectors}
+      MILVUS_DIMENSION: ${EMBEDDING_DIMENSION:-3072}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-milvus-mcp
+    expose: ["7003"]
+    depends_on:
+      milvus-standalone:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7003/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  neo4j-mcp:
+    build:
+      context: .
+      dockerfile: mcp-servers/Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_SERVER: neo4j-mcp
+      MCP_TRANSPORT: streamable_http
+      PORT: 7004
+      NEO4J_PROVIDER: ${NEO4J_PROVIDER:-neo4j}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-neo4j-mcp
+    expose: ["7004"]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7004/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  python-agent:
+    build:
+      context: .
+      dockerfile: python-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: 50051
+      AGENT_GRPC_AUTH_TOKEN: ${AGENT_GRPC_AUTH_TOKEN:?set AGENT_GRPC_AUTH_TOKEN}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      MOCK_MCP: "false"
+      MCP_MEMORY_FALLBACK: ${MCP_MEMORY_FALLBACK:-false}
+      EMBEDDING_MCP_TRANSPORT: streamable_http
+      FETCH_MCP_TRANSPORT: streamable_http
+      MILVUS_MCP_TRANSPORT: streamable_http
+      NEO4J_MCP_TRANSPORT: streamable_http
+      EMBEDDING_MCP_URL: http://embedding-mcp:7001/mcp
+      FETCH_MCP_URL: http://fetch-mcp:7002/mcp
+      MILVUS_MCP_URL: http://milvus-mcp:7003/mcp
+      NEO4J_MCP_URL: http://neo4j-mcp:7004/mcp
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-python-agent
+    expose: ["50051", "9101"]
+    depends_on:
+      embedding-mcp:
+        condition: service_healthy
+      fetch-mcp:
+        condition: service_healthy
+      milvus-mcp:
+        condition: service_healthy
+      neo4j-mcp:
+        condition: service_healthy
+
+  goframe-backend:
+    build:
+      context: .
+      dockerfile: goframe-backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      GOFRAME_HTTP_ADDR: :8080
+      GOFRAME_API_TOKEN: ${GOFRAME_API_TOKEN:?set GOFRAME_API_TOKEN}
+      AGENT_GRPC_ADDR: python-agent:50051
+      AGENT_GRPC_AUTH_TOKEN: ${AGENT_GRPC_AUTH_TOKEN:?set AGENT_GRPC_AUTH_TOKEN}
+      MYSQL_DSN: "${MYSQL_USER:-app}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE:-knowledge_post_agent}?charset=utf8mb4&parseTime=true&loc=Local"
+      SCHEMA_PATH: /app/shared/sql/init.sql
+      OUTPUT_DIR: /app/shared/outputs
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: knowmate-goframe-backend
+    volumes:
+      - markdown-outputs:/app/shared/outputs
+    expose: ["8080"]
+    depends_on:
+      migration-runner:
+        condition: service_completed_successfully
+      python-agent:
+        condition: service_healthy
+
+  web-admin:
+    build:
+      context: .
+      dockerfile: web-admin/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_ADMIN_PORT:-8088}:8080"
+    depends_on:
+      goframe-backend:
+        condition: service_healthy
+
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    restart: unless-stopped
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - milvus-etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    command: minio server /minio_data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - milvus-minio-data:/minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  milvus-standalone:
+    image: milvusdb/milvus:v2.5.27
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - milvus-data:/var/lib/milvus
+    depends_on:
+      milvus-etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  neo4j:
+    image: neo4j:2026.05.0
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD}
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p \"$$NEO4J_PASSWORD\" \"RETURN 1\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?set GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  mysql-data:
+  markdown-outputs:
+  milvus-etcd-data:
+  milvus-minio-data:
+  milvus-data:
+  neo4j-data:
+  neo4j-logs:
+  prometheus-data:
+  grafana-data:

@@ -27,6 +27,22 @@ class MCPPolicyTest(unittest.TestCase):
         self.assertFalse(policy.is_allowed("filter", "batch_insert_memory_vectors"))
         self.assertFalse(policy.is_allowed("filter", "delete_memory_vectors"))
 
+    def test_high_risk_tools_are_denied_by_default_even_if_listed(self) -> None:
+        policy = MCPPolicy({"output": {"send_email", "save_markdown", "generate_daily_report"}})
+
+        self.assertFalse(policy.is_allowed("output", "send_email"))
+        self.assertFalse(policy.is_allowed("output", "save_markdown"))
+        self.assertFalse(policy.is_allowed("output", "generate_daily_report"))
+
+    def test_high_risk_tools_require_explicit_allowlist(self) -> None:
+        policy = MCPPolicy(
+            {"output": {"send_email", "save_markdown"}},
+            high_risk_allowlist={"save_markdown"},
+        )
+
+        self.assertTrue(policy.is_allowed("output", "save_markdown"))
+        self.assertFalse(policy.is_allowed("output", "send_email"))
+
     # 函数作用：
     # 验证 filter Agent 调用 embed_text 是授权行为，并记录成功日志。
     def test_authorized_call_records_context(self) -> None:

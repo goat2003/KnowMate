@@ -303,7 +303,7 @@ func AgentHealth(ctx context.Context, cfg config.Config) (*agentpb.HealthCheckRe
 	// 根据配置计算 gRPC 连接和调用超时。
 	timeout := time.Duration(cfg.Agent.TimeoutSeconds) * time.Second
 	// 创建 gRPC client。
-	client, err := grpcclient.New(ctx, cfg.Agent.Address, timeout)
+	client, err := grpcclient.NewWithAuth(ctx, cfg.Agent.Address, timeout, cfg.Agent.AuthToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1703,7 +1703,7 @@ func (h *Harness) withArticlesClient(ctx context.Context, request *agentpb.Proce
 	// 读取配置中的超时时间。
 	timeout := time.Duration(h.cfg.Agent.TimeoutSeconds) * time.Second
 	// 建立到 Python Agent 的连接。
-	client, err := grpcclient.New(ctx, h.cfg.Agent.Address, timeout)
+	client, err := grpcclient.NewWithAuth(ctx, h.cfg.Agent.Address, timeout, h.cfg.Agent.AuthToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1726,7 +1726,7 @@ func (h *Harness) withArticlesClient(ctx context.Context, request *agentpb.Proce
 // - 返回 ProcessFeedbackResponse 或 error。
 func (h *Harness) withFeedbackClient(ctx context.Context, request *agentpb.ProcessFeedbackRequest) (*agentpb.ProcessFeedbackResponse, error) {
 	timeout := time.Duration(h.cfg.Agent.TimeoutSeconds) * time.Second
-	client, err := grpcclient.New(ctx, h.cfg.Agent.Address, timeout)
+	client, err := grpcclient.NewWithAuth(ctx, h.cfg.Agent.Address, timeout, h.cfg.Agent.AuthToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1893,8 +1893,10 @@ func (h *Harness) writeMarkdown(runID string, posts []model.Post) (string, error
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return "", err
 	}
-	// 文件名使用 runID，保证每次任务输出独立文件。
-	path := filepath.Join(outputDir, runID+".md")
+	path, err := safeMarkdownPath(outputDir, runID)
+	if err != nil {
+		return "", err
+	}
 	// strings.Builder 适合多次追加字符串，减少中间字符串分配。
 	var builder strings.Builder
 	// 写入文件头信息。
@@ -1910,6 +1912,45 @@ func (h *Harness) writeMarkdown(runID string, posts []model.Post) (string, error
 	}
 	// 写文件，0o644 表示用户可读写、其他用户可读。
 	return path, os.WriteFile(path, []byte(builder.String()), 0o644)
+}
+
+func safeMarkdownPath(outputDir string, runID string) (string, error) {
+	safeName := safeMarkdownFilename(runID)
+	if safeName == "" {
+		return "", errors.New("run_id cannot be used as markdown filename")
+	}
+	path := filepath.Join(outputDir, safeName+".md")
+	rel, err := filepath.Rel(outputDir, path)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", errors.New("markdown output path escapes output directory")
+	}
+	return path, nil
+}
+
+func safeMarkdownFilename(value string) string {
+	value = strings.TrimSpace(value)
+	var builder strings.Builder
+	lastDash := false
+	for _, ch := range value {
+		allowed := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-'
+		if allowed {
+			builder.WriteRune(ch)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	name := strings.Trim(builder.String(), ".-_")
+	if len(name) > 96 {
+		name = strings.Trim(name[:96], ".-_")
+	}
+	return name
 }
 
 // 函数作用：

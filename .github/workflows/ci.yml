@@ -1,0 +1,167 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-quality:
+    name: Go quality gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: goframe-backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: goframe-backend/go.mod
+          cache-dependency-path: goframe-backend/go.sum
+      - name: Go format
+        run: |
+          changed="$(gofmt -l .)"
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            exit 1
+          fi
+      - name: Go vet
+        run: go vet ./...
+      - name: Go test with coverage
+        run: go test ./... -coverprofile ../go-coverage.out -covermode atomic -count=1
+      - name: Go benchmark smoke
+        run: go test ./... -run '^$' -bench=Benchmark -benchmem -benchtime=1s
+      - name: Upload Go coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-coverage
+          path: go-coverage.out
+
+  python-quality:
+    name: Python quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            python-agent/requirements.txt
+            mcp-servers/requirements.txt
+            requirements-dev.txt
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r python-agent/requirements.txt -r mcp-servers/requirements.txt -r requirements-dev.txt
+      - name: Python lint
+        run: ruff check python-agent mcp-servers scripts
+      - name: Python type check
+        run: mypy python-agent/app/contracts.py python-agent/app/config.py python-agent/app/recommendation/config.py python-agent/app/mcp/policy.py mcp-servers/common/provider.py mcp-servers/common/observability.py scripts/check_secrets.py
+      - name: Python tests with coverage
+        run: pytest --cov=python-agent/app --cov=mcp-servers --cov-report=term-missing --cov-report=xml:python-coverage.xml python-agent/tests mcp-servers/tests
+      - name: Upload Python coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-coverage
+          path: python-coverage.xml
+
+  proto-and-migrations:
+    name: Proto and migration gate
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: knowledge_post_agent_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: goframe-backend/go.mod
+          cache-dependency-path: goframe-backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            python-agent/requirements.txt
+            mcp-servers/requirements.txt
+            requirements-dev.txt
+      - name: Install proto dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r python-agent/requirements.txt
+      - name: Proto generated code consistency
+        shell: pwsh
+        run: ./scripts/check_proto_contract.ps1 -Python python
+      - name: Migration validation
+        shell: pwsh
+        env:
+          MYSQL_PWD: rootpass
+        run: ./scripts/verify_migrations.ps1 -RequireDatabase -MySqlHost 127.0.0.1 -MySqlPort 3306 -Database knowledge_post_agent_ci -User root
+      - name: Secret scan
+        run: python scripts/check_secrets.py --all
+
+  docker-build:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build GoFrame image
+        run: docker build -f goframe-backend/Dockerfile -t knowmate/goframe-backend:ci .
+      - name: Build Python Agent image
+        run: docker build -f python-agent/Dockerfile -t knowmate/python-agent:ci .
+      - name: Build MCP Servers image
+        run: docker build -f mcp-servers/Dockerfile -t knowmate/mcp-servers:ci .
+
+  vulnerability-scan:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: goframe-backend/go.mod
+          cache-dependency-path: goframe-backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            python-agent/requirements.txt
+            mcp-servers/requirements.txt
+            requirements-dev.txt
+      - name: Go vulnerability scan
+        working-directory: goframe-backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: Python dependency vulnerability scan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          python -m pip_audit -r python-agent/requirements.txt -r mcp-servers/requirements.txt -r requirements-dev.txt
+
+  e2e-smoke:
+    name: E2E smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Docker Compose E2E smoke
+        shell: pwsh
+        env:
+          MYSQL_PORT: 3307
+        run: ./scripts/smoke_e2e.ps1

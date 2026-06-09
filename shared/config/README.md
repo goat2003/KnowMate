@@ -6,6 +6,18 @@ Common configuration is passed through environment variables. Each service also 
 - Python defaults: `python-agent/config.yaml`
 - Example environment: `.env.example`
 
+## 安全配置
+
+生产环境必须通过环境变量提供密钥，不要把真实密钥写入 YAML 或提交到仓库。
+
+- `GOFRAME_API_TOKEN`：开启 GoFrame HTTP API 的 Bearer token / `X-API-Key` 鉴权。
+- `AGENT_GRPC_AUTH_TOKEN`：GoFrame gRPC Client 和 Python Agent 共用的内部调用 token。
+- `GOFRAME_MAX_REQUEST_BODY_BYTES`：HTTP 请求体上限，默认 `1048576`。
+- `GOFRAME_RATE_LIMIT_BURST`：按客户端的一分钟内存限流窗口，默认 `120`。
+- `FETCH_MAX_RESPONSE_BYTES`：Fetch MCP 响应体上限，默认 `2097152`。
+
+`fetch-mcp` 会阻断 localhost、私网、链路本地、云元数据地址以及解析到这些地址的域名。文件和邮件类 MCP 工具默认属于高风险能力，未显式 allowlist 时不可调用。
+
 ## 抓取来源配置
 
 生产抓取来源使用 `crawler.sources`。支持的类型：

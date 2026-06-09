@@ -1,0 +1,14 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.worktrees
+artifacts
+**/__pycache__
+**/*.pyc
+**/.venv
+**/node_modules
+web-admin/dist
+shared/outputs/*.md
+goframe-backend/$out

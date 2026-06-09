@@ -88,3 +88,38 @@ func TestLoadCrawlerEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("sources=%#v", cfg.Crawler.Sources)
 	}
 }
+
+func TestLoadSecurityEnvironmentOverrides(t *testing.T) {
+	temp := t.TempDir()
+	configPath := filepath.Join(temp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`security:
+  api_token: "yaml-token"
+  max_request_body_bytes: 1000
+  rate_limit_burst: 2
+agent:
+  auth_token: "yaml-agent-token"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_PATH", configPath)
+	t.Setenv("GOFRAME_API_TOKEN", "env-token")
+	t.Setenv("GOFRAME_MAX_REQUEST_BODY_BYTES", "2048")
+	t.Setenv("GOFRAME_RATE_LIMIT_BURST", "7")
+	t.Setenv("AGENT_GRPC_AUTH_TOKEN", "env-agent-token")
+
+	cfg := Load(context.Background())
+
+	if cfg.Security.APIToken != "env-token" {
+		t.Fatalf("api token=%q", cfg.Security.APIToken)
+	}
+	if cfg.Security.MaxRequestBodyBytes != 2048 {
+		t.Fatalf("max request body=%d", cfg.Security.MaxRequestBodyBytes)
+	}
+	if cfg.Security.RateLimitBurst != 7 {
+		t.Fatalf("rate limit burst=%d", cfg.Security.RateLimitBurst)
+	}
+	if cfg.Agent.AuthToken != "env-agent-token" {
+		t.Fatalf("agent auth token=%q", cfg.Agent.AuthToken)
+	}
+}

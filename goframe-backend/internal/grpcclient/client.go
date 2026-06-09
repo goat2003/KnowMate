@@ -5,6 +5,7 @@ package grpcclient
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"knowledge-post-agent/goframe-backend/internal/agentpb"
@@ -14,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -21,15 +23,24 @@ import (
 type Client struct {
 	conn    *grpc.ClientConn
 	service agentpb.AgentServiceClient
+	token   string
 }
 
 // New 创建一个使用本地明文凭据的 Python Agent gRPC Client。
 func New(ctx context.Context, address string, dialTimeout time.Duration) (*Client, error) {
-	return NewWithDialOptions(ctx, address, dialTimeout, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return NewWithAuth(ctx, address, dialTimeout, "")
+}
+
+func NewWithAuth(ctx context.Context, address string, dialTimeout time.Duration, token string) (*Client, error) {
+	return NewWithAuthAndDialOptions(ctx, address, dialTimeout, token, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
 // NewWithDialOptions 创建 gRPC Client，并允许测试或调用方补充 DialOption。
 func NewWithDialOptions(ctx context.Context, address string, dialTimeout time.Duration, opts ...grpc.DialOption) (*Client, error) {
+	return NewWithAuthAndDialOptions(ctx, address, dialTimeout, "", opts...)
+}
+
+func NewWithAuthAndDialOptions(ctx context.Context, address string, dialTimeout time.Duration, token string, opts ...grpc.DialOption) (*Client, error) {
 	if dialTimeout <= 0 {
 		dialTimeout = 5 * time.Second
 	}
@@ -49,7 +60,7 @@ func NewWithDialOptions(ctx context.Context, address string, dialTimeout time.Du
 		return nil, err
 	}
 	observability.RecordGRPCClient(ctx, "Dial", "OK", time.Since(started).Seconds())
-	return &Client{conn: conn, service: agentpb.NewAgentServiceClient(conn)}, nil
+	return &Client{conn: conn, service: agentpb.NewAgentServiceClient(conn), token: strings.TrimSpace(token)}, nil
 }
 
 // Close 关闭 gRPC 连接。
@@ -60,6 +71,7 @@ func (c *Client) Close() error {
 // HealthCheck 调用 Python Agent HealthCheck RPC。
 func (c *Client) HealthCheck(ctx context.Context) (*agentpb.HealthCheckResponse, error) {
 	started := time.Now()
+	ctx = c.withAuth(ctx)
 	response, err := c.service.HealthCheck(ctx, &agentpb.HealthCheckRequest{Client: "goframe-backend"})
 	recordGRPCClient(ctx, "HealthCheck", err, started)
 	return response, err
@@ -70,6 +82,7 @@ func (c *Client) ProcessArticles(ctx context.Context, request *agentpb.ProcessAr
 	ctx, span := observability.StartRunSpan(ctx, "goframe-backend.grpcclient", "grpc.client.ProcessArticles", firstNonEmpty(request.GetRunId(), observability.RunIDFromContext(ctx)), "articles")
 	defer span.End()
 	started := time.Now()
+	ctx = c.withAuth(ctx)
 	response, err := c.service.ProcessArticles(ctx, request)
 	if err != nil {
 		span.RecordError(err)
@@ -84,6 +97,7 @@ func (c *Client) ProcessFeedback(ctx context.Context, request *agentpb.ProcessFe
 	ctx, span := observability.StartRunSpan(ctx, "goframe-backend.grpcclient", "grpc.client.ProcessFeedback", firstNonEmpty(request.GetRunId(), observability.RunIDFromContext(ctx)), "feedback")
 	defer span.End()
 	started := time.Now()
+	ctx = c.withAuth(ctx)
 	response, err := c.service.ProcessFeedback(ctx, request)
 	if err != nil {
 		span.RecordError(err)
@@ -91,6 +105,13 @@ func (c *Client) ProcessFeedback(ctx context.Context, request *agentpb.ProcessFe
 	}
 	recordGRPCClient(ctx, "ProcessFeedback", err, started)
 	return response, err
+}
+
+func (c *Client) withAuth(ctx context.Context) context.Context {
+	if c.token == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.token)
 }
 
 func recordGRPCClient(ctx context.Context, method string, err error, started time.Time) {

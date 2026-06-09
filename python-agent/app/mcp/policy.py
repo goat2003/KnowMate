@@ -21,6 +21,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+HIGH_RISK_TOOLS: set[str] = {
+    "send_email",
+    "save_markdown",
+    "write_file",
+    "read_file",
+    "delete_file",
+    "generate_daily_report",
+    "generate_weekly_report",
+}
+
+
 # DEFAULT_AGENT_TOOL_PERMISSIONS 是 MCP 权限白名单。
 # key 是 Agent 名称，value 是该 Agent 允许调用的 MCP Tool 名称集合。
 # 这张表的作用是防止某个 Agent 越权调用与自己职责无关的工具。
@@ -63,12 +74,7 @@ DEFAULT_AGENT_TOOL_PERMISSIONS: dict[str, set[str]] = {
         "get_related_topics",
     },
     # output Agent 当前代码中未实现，但权限表预留了报告、邮件和 Markdown 输出工具。
-    "output": {
-        "save_markdown",
-        "generate_daily_report",
-        "generate_weekly_report",
-        "send_email",
-    },
+    "output": set(),
 }
 
 
@@ -92,9 +98,15 @@ class MCPPolicy:
     #
     # 参数说明：
     # - permissions：可选的自定义权限表；不传时使用 DEFAULT_AGENT_TOOL_PERMISSIONS。
-    def __init__(self, permissions: dict[str, set[str]] | None = None) -> None:
+    def __init__(
+        self,
+        permissions: dict[str, set[str]] | None = None,
+        *,
+        high_risk_allowlist: set[str] | None = None,
+    ) -> None:
         # 保存权限表。注意这里不修改默认表内容，只引用或使用传入表。
         self._permissions = permissions or DEFAULT_AGENT_TOOL_PERMISSIONS
+        self._high_risk_allowlist = set(high_risk_allowlist or set())
 
     # 函数作用：
     # 简化版权限判断，只返回布尔值。
@@ -131,6 +143,11 @@ class MCPPolicy:
         # 未知 Agent 一律拒绝，防止新 Agent 默认拥有所有权限。
         if allowed_tools is None:
             return MCPPermissionDecision(False, f"MCP permission denied: unknown agent `{agent}`")
+        if tool in HIGH_RISK_TOOLS and tool not in self._high_risk_allowlist:
+            return MCPPermissionDecision(
+                False,
+                f"MCP permission denied: high-risk tool `{tool}` is disabled by default",
+            )
         # 工具不在白名单中则拒绝，并给出明确错误消息。
         if tool not in allowed_tools:
             return MCPPermissionDecision(

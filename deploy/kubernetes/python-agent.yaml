@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-agent
+  namespace: knowmate
+spec:
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: metrics
+      port: 9101
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: python-agent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-agent
+  namespace: knowmate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: python-agent
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: python-agent
+    spec:
+      serviceAccountName: knowmate-runtime
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: python-agent
+          image: ghcr.io/knowmate/python-agent:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: metrics
+              containerPort: 9101
+          envFrom:
+            - configMapRef:
+                name: knowmate-config
+          env:
+            - name: AGENT_GRPC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: AGENT_GRPC_AUTH_TOKEN
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: OPENAI_API_KEY
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: NEO4J_PASSWORD
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os, grpc, agent_pb2, agent_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:50051'); m=(('authorization','Bearer '+os.environ.get('AGENT_GRPC_AUTH_TOKEN','')),); agent_pb2_grpc.AgentServiceStub(c).HealthCheck(agent_pb2.HealthCheckRequest(client='k8s-readiness'), timeout=3, metadata=m)"
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os, grpc, agent_pb2, agent_pb2_grpc; c=grpc.insecure_channel('127.0.0.1:50051'); m=(('authorization','Bearer '+os.environ.get('AGENT_GRPC_AUTH_TOKEN','')),); agent_pb2_grpc.AgentServiceStub(c).HealthCheck(agent_pb2.HealthCheckRequest(client='k8s-liveness'), timeout=3, metadata=m)"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

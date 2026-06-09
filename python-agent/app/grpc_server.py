@@ -27,8 +27,10 @@ from __future__ import annotations
 from collections import OrderedDict
 from concurrent import futures
 import hashlib
+import hmac
 import json
 import logging
+import signal
 from threading import Event, Lock
 import time
 from typing import Any
@@ -45,6 +47,39 @@ from app.workflow import ArticleWorkflow
 
 # LOGGER 用于记录 gRPC Server 启动地址等服务端日志。
 LOGGER = logging.getLogger(__name__)
+
+
+def _metadata_authorized(metadata, expected_token: str) -> bool:
+    token = str(expected_token or "").strip()
+    if not token:
+        return True
+    for key, value in metadata or ():
+        lowered = str(key).lower()
+        raw = str(value).strip()
+        candidate = ""
+        if lowered == "authorization" and raw.lower().startswith("bearer "):
+            candidate = raw[7:].strip()
+        elif lowered == "x-api-key":
+            candidate = raw
+        if candidate and hmac.compare_digest(candidate, token):
+            return True
+    return False
+
+
+class AuthInterceptor(grpc.ServerInterceptor):
+    def __init__(self, settings: Settings) -> None:
+        self._token = settings.api_token
+
+    def intercept_service(self, continuation, handler_call_details):
+        if not self._token:
+            return continuation(handler_call_details)
+        if _metadata_authorized(handler_call_details.invocation_metadata, self._token):
+            return continuation(handler_call_details)
+
+        def abort(request, context):
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "missing or invalid gRPC API token")
+
+        return grpc.unary_unary_rpc_method_handler(abort)
 
 
 class ResponseCache:
@@ -352,6 +387,7 @@ def create_server(settings: Settings, service: AgentService | None = None) -> gr
     # ThreadPoolExecutor(max_workers=10) 表示 gRPC 可以用最多 10 个工作线程处理并发请求。
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=settings.grpc_max_workers),
+        interceptors=[AuthInterceptor(settings)],
         options=[
             ("grpc.max_receive_message_length", settings.grpc_max_message_bytes),
             ("grpc.max_send_message_length", settings.grpc_max_message_bytes),
@@ -360,6 +396,14 @@ def create_server(settings: Settings, service: AgentService | None = None) -> gr
     # 将 AgentService 实例注册到 gRPC Server，注册函数由 protobuf 代码生成。
     agent_pb2_grpc.add_AgentServiceServicer_to_server(service or AgentService(settings), server)
     return server
+
+
+def stop_grpc_server(server: grpc.Server, service: AgentService, grace_seconds: float = 5) -> None:
+    stop_event = server.stop(grace=grace_seconds)
+    wait = getattr(stop_event, "wait", None)
+    if callable(wait):
+        wait(timeout=max(float(grace_seconds), 0) + 1)
+    service.close()
 
 
 # 函数作用：
@@ -381,12 +425,23 @@ def serve(settings: Settings) -> None:
     # 启动服务开始接受请求。
     server.start()
     LOGGER.info("Python Agent protobuf gRPC server listening on %s", address)
+    stop_requested = Event()
+
+    def request_stop(signum, _frame) -> None:
+        LOGGER.info("Python Agent received signal %s; stopping gRPC server", signum)
+        stop_requested.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, request_stop)
+
     try:
         # 阻塞当前进程，直到收到终止信号。
-        server.wait_for_termination()
+        while not stop_requested.is_set():
+            timed_out = server.wait_for_termination(timeout=1)
+            if not timed_out:
+                break
     finally:
-        service.close()
-        server.stop(grace=5)
+        stop_grpc_server(server, service, grace_seconds=5)
 
 
 # 函数作用：

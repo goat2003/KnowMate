@@ -1,0 +1,6 @@
+pytest>=8,<9
+pytest-cov>=6,<8
+ruff>=0.14,<1
+mypy>=1.18,<2
+types-PyYAML>=6,<7
+pip-audit>=2.9,<3

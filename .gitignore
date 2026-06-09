@@ -7,5 +7,7 @@ __pycache__/
 venv/
 .env
 .worktrees/
+artifacts/
+web-admin/dist/
 shared/outputs/*.md
 !shared/outputs/.gitkeep

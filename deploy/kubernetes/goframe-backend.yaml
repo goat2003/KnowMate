@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: goframe-backend
+  namespace: knowmate
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: goframe-backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goframe-backend
+  namespace: knowmate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: goframe-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: goframe-backend
+    spec:
+      serviceAccountName: knowmate-runtime
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: goframe-backend
+          image: ghcr.io/knowmate/goframe-backend:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: knowmate-config
+          env:
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: MYSQL_PASSWORD
+            - name: GOFRAME_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: GOFRAME_API_TOKEN
+            - name: AGENT_GRPC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: knowmate-secrets
+                  key: AGENT_GRPC_AUTH_TOKEN
+            - name: MYSQL_DSN
+              value: "$(MYSQL_USER):$(MYSQL_PASSWORD)@tcp(mysql:3306)/$(MYSQL_DATABASE)?charset=utf8mb4&parseTime=true&loc=Local"
+          volumeMounts:
+            - name: markdown-outputs
+              mountPath: /app/shared/outputs
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: markdown-outputs
+          emptyDir: {}

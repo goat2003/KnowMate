@@ -109,12 +109,14 @@ func main() {
 		_ = observability.WriteJSONLog(os.Stdout, ctx, "goframe-backend", "info", "recovered interrupted tasks", map[string]any{"count": len(recovered)})
 	}
 	// 创建 HTTP handler，把 Store 和 Harness 注入进去。
-	httpHandler := handler.New(mysqlStore, runner)
+	httpHandler := handler.New(mysqlStore, runner, cfg.Security)
 
 	// 创建 GoFrame HTTP Server。
 	server := g.Server()
 	// 设置监听地址，例如 :8080。
 	server.SetAddr(cfg.Server.Address)
+	server.SetGraceful(true)
+	server.SetGracefulShutdownTimeout(15)
 	// 注册 /health、/runs/articles、/feedback、/posts、/run-logs 等路由。
 	httpHandler.Register(server)
 	// 启动 HTTP 服务并阻塞当前进程。
