@@ -1,6 +1,6 @@
 module knowledge-post-agent/goframe-backend
 
-go 1.25.0
+go 1.25.11
 
 require (
 	github.com/go-sql-driver/mysql v1.10.0

@@ -11,6 +11,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentAssetsTest(unittest.TestCase):
+    def test_go_toolchain_is_pinned_to_patched_release(self) -> None:
+        go_mod = _read("goframe-backend/go.mod")
+        match = re.search(r"(?m)^go\s+(\d+)\.(\d+)\.(\d+)\s*$", go_mod)
+        self.assertIsNotNone(match, "go.mod must pin a full Go patch version")
+        version = tuple(int(part) for part in match.groups())
+        self.assertGreaterEqual(version, (1, 25, 11))
+
+        dockerfile = _read("goframe-backend/Dockerfile")
+        image_match = re.search(r"(?m)^FROM\s+golang:(\d+\.\d+\.\d+)-alpine\s+AS\s+build\s*$", dockerfile)
+        self.assertIsNotNone(image_match, "Go builder image must pin the patched Go version")
+        image_version = tuple(int(part) for part in image_match.group(1).split("."))
+        self.assertEqual(image_version, version)
+
+    def test_e2e_smoke_makes_output_bind_mount_container_writable(self) -> None:
+        script = _read("scripts/smoke_e2e.ps1")
+        self.assertIn("Set-SmokeOutputDirectory", script)
+        self.assertRegex(script, r"(?i)chmod\s+['\"]?0777['\"]?")
+
     def test_service_dockerfiles_run_as_non_root_and_define_healthchecks(self) -> None:
         for relative in [
             "goframe-backend/Dockerfile",

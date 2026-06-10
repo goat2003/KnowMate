@@ -14,6 +14,21 @@ function Assert-True {
   if (-not $Condition) { throw $Message }
 }
 
+function Test-IsWindowsHost {
+  if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
+    return $IsWindows
+  }
+  return $env:OS -eq "Windows_NT"
+}
+
+function Set-SmokeOutputDirectory {
+  New-Item -ItemType Directory -Force -Path $OutputsDir | Out-Null
+  if (-not (Test-IsWindowsHost)) {
+    chmod "0777" "$OutputsDir"
+    if ($LASTEXITCODE -ne 0) { throw "failed to make smoke output directory writable: $OutputsDir" }
+  }
+}
+
 function Wait-HttpJson {
   param([string]$Url, [int]$Seconds = 180)
   $deadline = (Get-Date).AddSeconds($Seconds)
@@ -29,6 +44,8 @@ function Wait-HttpJson {
 
 Push-Location $Root
 try {
+  Set-SmokeOutputDirectory
+
   $services = @("mysql", "embedding-mcp", "fetch-mcp", "milvus-mcp", "neo4j-mcp", "python-agent", "goframe-backend")
   if ($IncludeObservability) {
     $services += @("jaeger", "otel-collector", "alertmanager", "prometheus", "grafana")
@@ -47,7 +64,6 @@ try {
   docker compose exec -T mysql mysql "-uroot" "-p$RootPassword" knowledge_post_agent -e "SET FOREIGN_KEY_CHECKS=0; TRUNCATE TABLE mcp_call_logs; TRUNCATE TABLE posts; TRUNCATE TABLE articles; TRUNCATE TABLE crawl_source_runs; TRUNCATE TABLE run_logs; SET FOREIGN_KEY_CHECKS=1;"
   if ($LASTEXITCODE -ne 0) { throw "failed to reset smoke-test tables" }
 
-  New-Item -ItemType Directory -Force -Path $OutputsDir | Out-Null
   Get-ChildItem -LiteralPath $OutputsDir -Filter "articles-*.md" -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
   $run = Invoke-RestMethod -Uri "http://127.0.0.1:8080/runs/articles" -Method Post -TimeoutSec 120

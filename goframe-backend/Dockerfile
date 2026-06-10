@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS build
+FROM golang:1.25.11-alpine AS build
 
 WORKDIR /src/goframe-backend
 COPY goframe-backend/go.mod goframe-backend/go.sum ./
