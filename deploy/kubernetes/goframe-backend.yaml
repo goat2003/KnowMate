@@ -71,6 +71,10 @@ spec:
           volumeMounts:
             - name: markdown-outputs
               mountPath: /app/shared/outputs
+            - name: crawler-config
+              mountPath: /app/goframe-backend/manifest/config/prod.sources.yaml
+              subPath: prod.sources.yaml
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /health
@@ -93,3 +97,9 @@ spec:
       volumes:
         - name: markdown-outputs
           emptyDir: {}
+        - name: crawler-config
+          configMap:
+            name: knowmate-crawler-config
+            items:
+              - key: prod.sources.yaml
+                path: prod.sources.yaml

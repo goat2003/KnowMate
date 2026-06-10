@@ -20,6 +20,30 @@
 
 不要提交 `.env` 或真实 secret。Kubernetes 使用 `deploy/kubernetes/secrets.example.yaml` 复制为 `secrets.yaml` 后替换真实值。
 
+## 生产抓取源
+
+生产 Compose 和 Kubernetes 不再依赖内置 `mock://sample`。GoFrame 启动时读取 `CONFIG_PATH`：
+
+- Compose: `docker-compose.prod.yml` 将 `${CRAWLER_CONFIG_PATH:-./configs/crawler/prod.sources.example.yaml}` 只读挂载为 `/app/goframe-backend/manifest/config/prod.sources.yaml`。
+- Kubernetes: `deploy/kubernetes/app-config.yaml` 提供 `knowmate-crawler-config`，`deploy/kubernetes/goframe-backend.yaml` 使用 `subPath` 挂载同名文件。
+
+上线前替换真实源的推荐流程：
+
+```powershell
+Copy-Item .\configs\crawler\prod.sources.example.yaml .\configs\crawler\prod.sources.yaml
+notepad .\configs\crawler\prod.sources.yaml
+```
+
+然后在受控 `configs/env/prod.env` 中设置：
+
+```env
+CRAWLER_CONFIG_PATH=./configs/crawler/prod.sources.yaml
+```
+
+默认公开示例源只使用英文来源：arXiv `cs.AI/cs.LG/cs.CL/cs.CV`、OpenAI/LangChain/MCP/Milvus/Neo4j GitHub Releases、OpenAI News、LangChain Blog、Google Research、Hugging Face Blog。`huggingface_papers` 和 `mock` 在生产示例中均为 disabled；Hugging Face Daily Papers 当前只有官方 HTML 页面已确认公开，`/papers/rss` 在本机验证返回 401，启用前必须确认官方 RSS/API 权限或扩展 adapter。
+
+所有真实源都必须在发布窗口前复核授权、服务条款、robots.txt、请求频率、缓存策略和失败降级。公开 feed 也不等于可无限抓取；必要时用 `CRAWLER_PER_HOST_INTERVAL_MILLISECONDS`、`CRAWLER_SOURCE_MAX_ITEMS`、`CRAWLER_RUN_MAX_ARTICLES` 收紧频率。
+
 ## 健康检查与优雅关闭
 
 - GoFrame: `/health` 检查 MySQL 与 Python Agent，容器内 `HEALTHCHECK` 使用 HTTP 探测；进程启用 GoFrame graceful shutdown。

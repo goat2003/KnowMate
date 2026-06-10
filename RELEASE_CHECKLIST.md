@@ -8,6 +8,8 @@
 - [ ] 确认 `.env`、真实密钥、数据库 dump、私钥没有进入提交：`python scripts/check_secrets.py --all`
 - [ ] 确认版本号、镜像 tag、发布窗口和回滚负责人已经记录。
 - [ ] 确认生产 secret 已在目标环境创建：`MYSQL_PASSWORD`、`GOFRAME_API_TOKEN`、`AGENT_GRPC_AUTH_TOKEN`、`OPENAI_API_KEY`、`NEO4J_PASSWORD`、`MINIO_ROOT_PASSWORD`、`GRAFANA_ADMIN_PASSWORD`。
+- [ ] 确认生产抓取源文件已经替换或批准使用默认英文公开示例：`configs/crawler/prod.sources.example.yaml` 或受控 `configs/crawler/prod.sources.yaml`。
+- [ ] 确认生产 enabled 源不包含 `mock://sample`，并已复核授权、服务条款、robots.txt、请求频率、缓存策略和失败降级。
 
 ## 构建与静态验收
 
@@ -29,6 +31,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\final_acceptance.p
 docker compose --env-file .\configs\env\prod.env -f .\docker-compose.prod.yml config
 ```
 
+- [ ] 确认渲染后的 `goframe-backend` 包含 `CONFIG_PATH=/app/goframe-backend/manifest/config/prod.sources.yaml`，并挂载 `${CRAWLER_CONFIG_PATH:-./configs/crawler/prod.sources.example.yaml}`。
+- [ ] Kubernetes 发布前确认 `deploy/kubernetes/app-config.yaml` 中 `knowmate-crawler-config` 已替换为目标环境源，`deploy/kubernetes/goframe-backend.yaml` 已挂载 `prod.sources.yaml`。
 - [ ] 校验 Kubernetes manifests：
 
 ```powershell
@@ -61,7 +65,7 @@ kubectl -n knowmate wait --for=condition=complete job/migration-runner --timeout
 ## 最终验收
 
 - [ ] 完整启动所有服务。
-- [ ] 抓取 fixture 或真实内容：默认 `mock://sample` 可离线验收，真实源在生产窗口抽样。
+- [ ] 抓取生产源或批准的 fixture：生产 Compose/Kubernetes 默认不启用 `mock://sample`，真实源在生产窗口抽样并记录每个 source 的 `crawl_source_runs` 状态。
 - [ ] 完成筛选、总结、改写和检查：检查 `POST /runs/articles` 返回 `completed` 或明确 `partially_completed`。
 - [ ] 保存文章与推文：检查 MySQL `articles`、`posts`。
 - [ ] 生成 Markdown：检查 `shared/outputs` 或容器卷 `markdown-outputs`。

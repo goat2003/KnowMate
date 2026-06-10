@@ -127,7 +127,7 @@ curl.exe -X POST http://127.0.0.1:8080/profile/rebuild `
   -d "{\"user_id\":\"default-user\"}"
 ```
 
-Generated Markdown files are written to [shared/outputs](D:/projects/KnowMate/knowledge-post-agent/shared/outputs). The default RSS source is `mock://sample`, so the MVP can run without internet access once MySQL and Python Agent are up.
+Generated Markdown files are written to [shared/outputs](D:/projects/KnowMate/knowledge-post-agent/shared/outputs). Local development keeps a disabled-network `mock://sample` source for offline smoke tests; production Compose/Kubernetes mounts an explicit crawler config instead of relying on that local mock default.
 
 ## Observability
 
@@ -617,7 +617,23 @@ python -m unittest tests.test_real_services_integration.RealOpenAIEmbeddingSmoke
 
 GoFrame 后端支持 RSS、Atom、Arxiv、GitHub Release 和 HuggingFace Papers。RSS 与 Atom 使用统一的 `feed` 类型，其余类型分别为 `arxiv`、`github_release`、`huggingface_papers`；本地开发可使用不会访问公网的 `mock` 类型。
 
-来源通过 `crawler.sources` 配置。仅当 `crawler.sources` 缺失时，旧版 `rss.sources` 才会自动转换为 `feed` 或 `mock` 来源，避免重复抓取。完整示例见 `shared/config/rss_sources.example.yaml`。
+来源通过 `crawler.sources` 配置。仅当 `crawler.sources` 缺失时，旧版 `rss.sources` 才会自动转换为 `feed` 或 `mock` 来源，避免重复抓取。开发与兼容示例见 `shared/config/rss_sources.example.yaml`；生产公开源示例见 `configs/crawler/prod.sources.example.yaml`。
+
+生产 Compose 默认把 `configs/crawler/prod.sources.example.yaml` 只读挂载到 GoFrame 容器，并设置 `CONFIG_PATH=/app/goframe-backend/manifest/config/prod.sources.yaml`。替换真实源时，复制示例文件为受控文件，例如 `configs/crawler/prod.sources.yaml`，然后在 `configs/env/prod.env` 中设置：
+
+```env
+CRAWLER_CONFIG_PATH=./configs/crawler/prod.sources.yaml
+```
+
+Kubernetes 使用 `deploy/kubernetes/app-config.yaml` 中的 `knowmate-crawler-config` ConfigMap，并通过 `deploy/kubernetes/goframe-backend.yaml` 挂载到同一个 `CONFIG_PATH`。生产集群建议用 Kustomize、Helm 或平台 ConfigMap 管理替换 `prod.sources.yaml` 内容，不要直接启用本地 `mock://sample`。
+
+当前生产示例只包含英文公开源，默认 enabled 的方向包括：
+
+- arXiv 官方 export API：`cs.AI`、`cs.LG`、`cs.CL`、`cs.CV`
+- GitHub Releases：OpenAI Agents Python、LangChain、Model Context Protocol Python SDK、Milvus、Neo4j
+- 通用 feed：OpenAI News、LangChain Blog、Google Research、Hugging Face Blog
+
+`huggingface_papers` 类型保留 disabled 示例。当前 adapter 需要 RSS/Atom；本机验证时 Hugging Face Daily Papers 官方页面公开可访问，但 `/papers/rss` 返回 401，所以生产启用前需要确认官方 feed/API 权限或扩展 adapter。所有真实源上线前都要由发布负责人确认授权、服务条款、robots.txt、请求频率、缓存策略和失败降级；arXiv/GitHub/博客 feed 虽然是公开默认示例，也应按目标环境的抓取频率重新复核。`CRAWLER_*` 环境变量仍会在 YAML 加载后覆盖 User-Agent、超时、重试、单主机间隔、响应大小和单次抓取规模。
 
 抓取流程包含：
 

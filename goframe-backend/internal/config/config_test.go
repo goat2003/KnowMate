@@ -34,6 +34,62 @@ func TestNormalizePrefersCrawlerSourcesOverLegacyRSS(t *testing.T) {
 	}
 }
 
+func TestLoadPrefersCrawlerSourcesOverLegacyRSS(t *testing.T) {
+	temp := t.TempDir()
+	configPath := filepath.Join(temp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`crawler:
+  sources:
+    - name: "configured-arxiv"
+      type: "arxiv"
+      url: "https://export.arxiv.org/api/query?search_query=cat:cs.AI"
+      enabled: true
+rss:
+  sources:
+    - name: "legacy-mock"
+      url: "mock://sample"
+      enabled: true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_PATH", configPath)
+
+	cfg := Load(context.Background())
+	if len(cfg.Crawler.Sources) != 1 {
+		t.Fatalf("sources=%#v", cfg.Crawler.Sources)
+	}
+	if cfg.Crawler.Sources[0].Name != "configured-arxiv" || cfg.Crawler.Sources[0].URL == "mock://sample" {
+		t.Fatalf("crawler.sources did not take priority: %#v", cfg.Crawler.Sources)
+	}
+}
+
+func TestLoadProductionCrawlerExampleUsesEnabledNonMockSources(t *testing.T) {
+	configPath := filepath.Clean(filepath.Join("..", "..", "..", "configs", "crawler", "prod.sources.example.yaml"))
+	t.Setenv("CONFIG_PATH", configPath)
+
+	cfg := Load(context.Background())
+
+	enabledNonMock := 0
+	types := make(map[string]bool)
+	for _, source := range cfg.Crawler.Sources {
+		types[source.Type] = true
+		if source.Enabled && source.Type != "mock" && source.URL != "mock://sample" {
+			enabledNonMock++
+		}
+		if source.Enabled && (source.Type == "mock" || source.URL == "mock://sample") {
+			t.Fatalf("production example enables mock source: %#v", source)
+		}
+	}
+	if enabledNonMock == 0 {
+		t.Fatalf("production example has no enabled non-mock source: %#v", cfg.Crawler.Sources)
+	}
+	for _, required := range []string{"feed", "arxiv", "github_release", "huggingface_papers", "mock"} {
+		if !types[required] {
+			t.Fatalf("production example missing %q source type: %#v", required, cfg.Crawler.Sources)
+		}
+	}
+}
+
 func TestNormalizeCrawlerDefaults(t *testing.T) {
 	cfg := (Config{}).Normalize()
 	if cfg.Crawler.UserAgent == "" || cfg.Crawler.RequestTimeoutSeconds <= 0 || cfg.Crawler.RetryTimes <= 0 ||

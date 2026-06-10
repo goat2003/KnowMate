@@ -182,6 +182,7 @@ services:
       AGENT_GRPC_ADDR: python-agent:50051
       AGENT_GRPC_AUTH_TOKEN: ${AGENT_GRPC_AUTH_TOKEN:?set AGENT_GRPC_AUTH_TOKEN}
       MYSQL_DSN: "${MYSQL_USER:-app}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE:-knowledge_post_agent}?charset=utf8mb4&parseTime=true&loc=Local"
+      CONFIG_PATH: /app/goframe-backend/manifest/config/prod.sources.yaml
       SCHEMA_PATH: /app/shared/sql/init.sql
       OUTPUT_DIR: /app/shared/outputs
       OTEL_ENABLED: ${OTEL_ENABLED:-true}
@@ -189,6 +190,7 @@ services:
       OTEL_SERVICE_NAME: knowmate-goframe-backend
     volumes:
       - markdown-outputs:/app/shared/outputs
+      - ${CRAWLER_CONFIG_PATH:-./configs/crawler/prod.sources.example.yaml}:/app/goframe-backend/manifest/config/prod.sources.yaml:ro
     expose: ["8080"]
     depends_on:
       migration-runner:
