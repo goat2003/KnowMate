@@ -35,6 +35,11 @@ class AgentServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.Chat = channel.unary_unary(
+                '/agent.AgentService/Chat',
+                request_serializer=agent__pb2.ChatRequest.SerializeToString,
+                response_deserializer=agent__pb2.ChatResponse.FromString,
+                _registered_method=True)
         self.HealthCheck = channel.unary_unary(
                 '/agent.AgentService/HealthCheck',
                 request_serializer=agent__pb2.HealthCheckRequest.SerializeToString,
@@ -55,6 +60,12 @@ class AgentServiceStub:
 class AgentServiceServicer:
     """AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
     """
+
+    def Chat(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def HealthCheck(self, request, context):
         """HealthCheck 用于检查 Python Agent Service 是否在线。
@@ -80,6 +91,11 @@ class AgentServiceServicer:
 
 def add_AgentServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'Chat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Chat,
+                    request_deserializer=agent__pb2.ChatRequest.FromString,
+                    response_serializer=agent__pb2.ChatResponse.SerializeToString,
+            ),
             'HealthCheck': grpc.unary_unary_rpc_method_handler(
                     servicer.HealthCheck,
                     request_deserializer=agent__pb2.HealthCheckRequest.FromString,
@@ -106,6 +122,33 @@ def add_AgentServiceServicer_to_server(servicer, server):
 class AgentService:
     """AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
     """
+
+    @staticmethod
+    def Chat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/agent.AgentService/Chat',
+            agent__pb2.ChatRequest.SerializeToString,
+            agent__pb2.ChatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def HealthCheck(request,

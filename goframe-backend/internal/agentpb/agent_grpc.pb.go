@@ -36,6 +36,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	AgentService_Chat_FullMethodName            = "/agent.AgentService/Chat"
 	AgentService_HealthCheck_FullMethodName     = "/agent.AgentService/HealthCheck"
 	AgentService_ProcessArticles_FullMethodName = "/agent.AgentService/ProcessArticles"
 	AgentService_ProcessFeedback_FullMethodName = "/agent.AgentService/ProcessFeedback"
@@ -47,6 +48,7 @@ const (
 //
 // AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
 type AgentServiceClient interface {
+	Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error)
 	// HealthCheck 用于检查 Python Agent Service 是否在线。
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 	// ProcessArticles 触发文章筛选、摘要、改写和校验流程。
@@ -61,6 +63,16 @@ type agentServiceClient struct {
 
 func NewAgentServiceClient(cc grpc.ClientConnInterface) AgentServiceClient {
 	return &agentServiceClient{cc}
+}
+
+func (c *agentServiceClient) Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChatResponse)
+	err := c.cc.Invoke(ctx, AgentService_Chat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *agentServiceClient) HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
@@ -99,6 +111,7 @@ func (c *agentServiceClient) ProcessFeedback(ctx context.Context, in *ProcessFee
 //
 // AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
 type AgentServiceServer interface {
+	Chat(context.Context, *ChatRequest) (*ChatResponse, error)
 	// HealthCheck 用于检查 Python Agent Service 是否在线。
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 	// ProcessArticles 触发文章筛选、摘要、改写和校验流程。
@@ -115,6 +128,9 @@ type AgentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAgentServiceServer struct{}
 
+func (UnimplementedAgentServiceServer) Chat(context.Context, *ChatRequest) (*ChatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Chat not implemented")
+}
 func (UnimplementedAgentServiceServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HealthCheck not implemented")
 }
@@ -143,6 +159,24 @@ func RegisterAgentServiceServer(s grpc.ServiceRegistrar, srv AgentServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&AgentService_ServiceDesc, srv)
+}
+
+func _AgentService_Chat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).Chat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_Chat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).Chat(ctx, req.(*ChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _AgentService_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -206,6 +240,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "agent.AgentService",
 	HandlerType: (*AgentServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Chat",
+			Handler:    _AgentService_Chat_Handler,
+		},
 		{
 			MethodName: "HealthCheck",
 			Handler:    _AgentService_HealthCheck_Handler,

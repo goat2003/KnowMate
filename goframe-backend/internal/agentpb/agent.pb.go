@@ -1123,6 +1123,127 @@ func (x *HealthCheckResponse) GetMockMode() bool {
 	return false
 }
 
+// Conversation state is supplied by Go; the Agent is stateless and cannot select another user.
+type ChatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Text          string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	ContextJson   string                 `protobuf:"bytes,4,opt,name=context_json,json=contextJson,proto3" json:"context_json,omitempty"`
+	Remember      bool                   `protobuf:"varint,5,opt,name=remember,proto3" json:"remember,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatRequest) Reset() {
+	*x = ChatRequest{}
+	mi := &file_agent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatRequest) ProtoMessage() {}
+
+func (x *ChatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatRequest.ProtoReflect.Descriptor instead.
+func (*ChatRequest) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ChatRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetContextJson() string {
+	if x != nil {
+		return x.ContextJson
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetRemember() bool {
+	if x != nil {
+		return x.Remember
+	}
+	return false
+}
+
+type ChatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResultJson    string                 `protobuf:"bytes,1,opt,name=result_json,json=resultJson,proto3" json:"result_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatResponse) Reset() {
+	*x = ChatResponse{}
+	mi := &file_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatResponse) ProtoMessage() {}
+
+func (x *ChatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatResponse.ProtoReflect.Descriptor instead.
+func (*ChatResponse) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ChatResponse) GetResultJson() string {
+	if x != nil {
+		return x.ResultJson
+	}
+	return ""
+}
+
 var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
@@ -1236,8 +1357,19 @@ const file_agent_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12%\n" +
 	"\x0eenabled_agents\x18\x03 \x03(\tR\renabledAgents\x12\x1b\n" +
-	"\tmock_mode\x18\x04 \x01(\bR\bmockMode2\xf8\x01\n" +
-	"\fAgentService\x12D\n" +
+	"\tmock_mode\x18\x04 \x01(\bR\bmockMode\"\x98\x01\n" +
+	"\vChatRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12!\n" +
+	"\fcontext_json\x18\x04 \x01(\tR\vcontextJson\x12\x1a\n" +
+	"\bremember\x18\x05 \x01(\bR\bremember\"/\n" +
+	"\fChatResponse\x12\x1f\n" +
+	"\vresult_json\x18\x01 \x01(\tR\n" +
+	"resultJson2\xa9\x02\n" +
+	"\fAgentService\x12/\n" +
+	"\x04Chat\x12\x12.agent.ChatRequest\x1a\x13.agent.ChatResponse\x12D\n" +
 	"\vHealthCheck\x12\x19.agent.HealthCheckRequest\x1a\x1a.agent.HealthCheckResponse\x12P\n" +
 	"\x0fProcessArticles\x12\x1d.agent.ProcessArticlesRequest\x1a\x1e.agent.ProcessArticlesResponse\x12P\n" +
 	"\x0fProcessFeedback\x12\x1d.agent.ProcessFeedbackRequest\x1a\x1e.agent.ProcessFeedbackResponseB$Z\"knowledge-post-agent/proto/agentpbb\x06proto3"
@@ -1254,7 +1386,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_agent_proto_goTypes = []any{
 	(*Article)(nil),                 // 0: agent.Article
 	(*McpPolicy)(nil),               // 1: agent.McpPolicy
@@ -1268,32 +1400,36 @@ var file_agent_proto_goTypes = []any{
 	(*ProcessFeedbackResponse)(nil), // 9: agent.ProcessFeedbackResponse
 	(*HealthCheckRequest)(nil),      // 10: agent.HealthCheckRequest
 	(*HealthCheckResponse)(nil),     // 11: agent.HealthCheckResponse
-	nil,                             // 12: agent.ProcessArticlesRequest.UserProfileSnapshotEntry
-	nil,                             // 13: agent.FeedbackItem.MetadataEntry
-	nil,                             // 14: agent.ProcessFeedbackRequest.UserProfileSnapshotEntry
-	nil,                             // 15: agent.ProcessFeedbackResponse.UpdatedProfileSnapshotEntry
+	(*ChatRequest)(nil),             // 12: agent.ChatRequest
+	(*ChatResponse)(nil),            // 13: agent.ChatResponse
+	nil,                             // 14: agent.ProcessArticlesRequest.UserProfileSnapshotEntry
+	nil,                             // 15: agent.FeedbackItem.MetadataEntry
+	nil,                             // 16: agent.ProcessFeedbackRequest.UserProfileSnapshotEntry
+	nil,                             // 17: agent.ProcessFeedbackResponse.UpdatedProfileSnapshotEntry
 }
 var file_agent_proto_depIdxs = []int32{
 	0,  // 0: agent.ProcessArticlesRequest.articles:type_name -> agent.Article
-	12, // 1: agent.ProcessArticlesRequest.user_profile_snapshot:type_name -> agent.ProcessArticlesRequest.UserProfileSnapshotEntry
+	14, // 1: agent.ProcessArticlesRequest.user_profile_snapshot:type_name -> agent.ProcessArticlesRequest.UserProfileSnapshotEntry
 	1,  // 2: agent.ProcessArticlesRequest.mcp_policy:type_name -> agent.McpPolicy
 	2,  // 3: agent.ArticleProcessResult.mcp_call_logs:type_name -> agent.McpCallLog
 	4,  // 4: agent.ArticleProcessResult.score_breakdown:type_name -> agent.ScoreBreakdownItem
 	5,  // 5: agent.ProcessArticlesResponse.results:type_name -> agent.ArticleProcessResult
-	13, // 6: agent.FeedbackItem.metadata:type_name -> agent.FeedbackItem.MetadataEntry
+	15, // 6: agent.FeedbackItem.metadata:type_name -> agent.FeedbackItem.MetadataEntry
 	7,  // 7: agent.ProcessFeedbackRequest.feedback:type_name -> agent.FeedbackItem
-	14, // 8: agent.ProcessFeedbackRequest.user_profile_snapshot:type_name -> agent.ProcessFeedbackRequest.UserProfileSnapshotEntry
+	16, // 8: agent.ProcessFeedbackRequest.user_profile_snapshot:type_name -> agent.ProcessFeedbackRequest.UserProfileSnapshotEntry
 	1,  // 9: agent.ProcessFeedbackRequest.mcp_policy:type_name -> agent.McpPolicy
-	15, // 10: agent.ProcessFeedbackResponse.updated_profile_snapshot:type_name -> agent.ProcessFeedbackResponse.UpdatedProfileSnapshotEntry
+	17, // 10: agent.ProcessFeedbackResponse.updated_profile_snapshot:type_name -> agent.ProcessFeedbackResponse.UpdatedProfileSnapshotEntry
 	2,  // 11: agent.ProcessFeedbackResponse.mcp_call_logs:type_name -> agent.McpCallLog
-	10, // 12: agent.AgentService.HealthCheck:input_type -> agent.HealthCheckRequest
-	3,  // 13: agent.AgentService.ProcessArticles:input_type -> agent.ProcessArticlesRequest
-	8,  // 14: agent.AgentService.ProcessFeedback:input_type -> agent.ProcessFeedbackRequest
-	11, // 15: agent.AgentService.HealthCheck:output_type -> agent.HealthCheckResponse
-	6,  // 16: agent.AgentService.ProcessArticles:output_type -> agent.ProcessArticlesResponse
-	9,  // 17: agent.AgentService.ProcessFeedback:output_type -> agent.ProcessFeedbackResponse
-	15, // [15:18] is the sub-list for method output_type
-	12, // [12:15] is the sub-list for method input_type
+	12, // 12: agent.AgentService.Chat:input_type -> agent.ChatRequest
+	10, // 13: agent.AgentService.HealthCheck:input_type -> agent.HealthCheckRequest
+	3,  // 14: agent.AgentService.ProcessArticles:input_type -> agent.ProcessArticlesRequest
+	8,  // 15: agent.AgentService.ProcessFeedback:input_type -> agent.ProcessFeedbackRequest
+	13, // 16: agent.AgentService.Chat:output_type -> agent.ChatResponse
+	11, // 17: agent.AgentService.HealthCheck:output_type -> agent.HealthCheckResponse
+	6,  // 18: agent.AgentService.ProcessArticles:output_type -> agent.ProcessArticlesResponse
+	9,  // 19: agent.AgentService.ProcessFeedback:output_type -> agent.ProcessFeedbackResponse
+	16, // [16:20] is the sub-list for method output_type
+	12, // [12:16] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name
 	12, // [12:12] is the sub-list for extension extendee
 	0,  // [0:12] is the sub-list for field type_name
@@ -1310,7 +1446,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

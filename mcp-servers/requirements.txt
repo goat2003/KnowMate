@@ -1,3 +1,4 @@
+-c ../shared/python-security-constraints.txt
 mcp>=1.27,<2
 openai>=2.11,<3
 pymilvus>=2.6,<3

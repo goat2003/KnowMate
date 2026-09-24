@@ -4,7 +4,6 @@
 >
 > 原文件已以中文为主；本镜像保留命令、路径、代码块和协议字段原样。
 
-
 ## 总览
 
 KnowMate 是一个个性化知识内容处理系统。GoFrame Backend 负责 HTTP API、任务编排、数据库持久化和 Markdown 输出；Python Agent 负责筛选、总结、改写、检查和反馈画像更新；MCP Server 负责外部工具边界，包括网页抓取、embedding、Milvus 向量记忆和 Neo4j 兴趣图。

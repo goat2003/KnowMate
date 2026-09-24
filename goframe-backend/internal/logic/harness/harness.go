@@ -1751,7 +1751,19 @@ func (h *Harness) withFeedbackClient(ctx context.Context, request *agentpb.Proce
 // - 补齐 user_id 和 interests，作为 Python Agent 的 user_profile_snapshot。
 func (h *Harness) loadProfile(ctx context.Context) map[string]string {
 	snapshot := h.loadProfileSnapshot(ctx)
-	return normalizeProfile(snapshot.Snapshot, h.cfg.Profile.UserID, h.cfg.Profile.Interests)
+	profile := normalizeProfile(snapshot.Snapshot, h.cfg.Profile.UserID, h.cfg.Profile.Interests)
+	if reader, ok := h.store.(interface {
+		ChatPreferences(context.Context, string) (map[string]string, error)
+	}); ok {
+		if memory, err := reader.ChatPreferences(ctx, h.cfg.Profile.UserID); err == nil {
+			for key, target := range map[string]string{"interests": "interests", "goal": "keywords", "avoid": "negative_preferences", "style": "preferred_style", "level": "knowledge_level"} {
+				if value := memory[key]; value != "" {
+					profile[target] = value
+				}
+			}
+		}
+	}
+	return profile
 }
 
 func (h *Harness) loadProfileSnapshot(ctx context.Context) model.UserProfileSnapshot {

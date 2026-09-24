@@ -15,11 +15,14 @@ import {
   UserRound
 } from "lucide-react";
 import { createApiClient, type ApiClient } from "./api";
+import { ChatPage } from "./ChatPage";
+import { WeChatChatPage } from "./WeChatChatPage";
 import { isArrayEmpty, useAsyncData } from "./hooks";
 import { JsonPreview, Metric, StateBlock, StatusPill } from "./components";
 import type { Article, HealthResponse, McpCallLog, Post, TaskRun, UserProfileSnapshot } from "./types";
 
 type View =
+  | "chat"
   | "overview"
   | "runs"
   | "articles"
@@ -30,6 +33,7 @@ type View =
   | "settings";
 
 const navItems: Array<{ id: View; label: string; icon: React.ComponentType<{ size?: number }> }> = [
+  { id: "chat", label: "与知识助手聊天", icon: MessageSquareText },
   { id: "overview", label: "系统概览", icon: Activity },
   { id: "runs", label: "任务运行记录", icon: ClipboardList },
   { id: "articles", label: "文章列表", icon: FileText },
@@ -42,6 +46,12 @@ const navItems: Array<{ id: View; label: string; icon: React.ComponentType<{ siz
 
 export function App({ client }: { client?: ApiClient }) {
   const api = useMemo(() => client ?? createApiClient(), [client]);
+  if (window.location.pathname === "/wechat/chat") return <WeChatChatPage client={api} />;
+
+  return <AdminApp api={api} />;
+}
+
+function AdminApp({ api }: { api: ApiClient }) {
   const [view, setView] = useState<View>("overview");
   const [selectedRunID, setSelectedRunID] = useState("");
   const [selectedPostID, setSelectedPostID] = useState("");
@@ -52,6 +62,8 @@ export function App({ client }: { client?: ApiClient }) {
   const content = useMemo(() => {
     const common = { client: api, setNotice };
     switch (view) {
+      case "chat":
+        return <ChatPage client={api} />;
       case "overview":
         return <Overview client={api} health={health.state} setNotice={setNotice} openView={setView} />;
       case "runs":

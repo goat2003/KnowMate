@@ -397,7 +397,8 @@ class LLMTool:
     #
     # 返回值：
     # - 构造函数不返回值。
-    def __init__(self, client: LLMClient, fallback_client: LLMClient | None = None, startup_warnings: list[str] | None = None) -> None:
+    def __init__(self, client: LLMClient, fallback_client: LLMClient | None = None, startup_warnings: list[str] | None = None, *, strict: bool = False) -> None:
+        self.strict = strict
         # client 是正常情况下使用的 provider。
         self.client = client
         # fallback_client 默认是 mock，确保真实 LLM 不可用时服务仍能返回可校验结构。
@@ -544,6 +545,8 @@ class LLMTool:
                 repair_error_message = str(redact_sensitive(str(repair_error)))
                 LOGGER.warning("LLM %s repair failed for %s: %s", self.client.provider_name, task, repair_error_message)
                 issue = f"llm_fallback:{self.client.provider_name}:{type(repair_error).__name__}"
+                if self.strict:
+                    raise RuntimeError("production LLM failed validation; mock fallback is disabled") from None
                 return self._record_fallback(task, prompt_tokens, fallback, issue)
 
     def _complete_and_validate(
@@ -666,7 +669,7 @@ class LLMTool:
 def build_llm_tool(settings: Settings) -> LLMTool:
     # 先创建具体 provider client，再把初始化告警保存到 LLMTool。
     client, warnings = build_llm_client(settings.llm)
-    return LLMTool(client=client, startup_warnings=warnings)
+    return LLMTool(client=client, startup_warnings=warnings, strict=settings.llm.strict)
 
 
 # 函数作用：
@@ -684,6 +687,13 @@ def build_llm_tool(settings: Settings) -> LLMTool:
 # - provider=claude：读取 ANTHROPIC_API_KEY 等环境变量，但当前接口未实现，运行时会 fallback。
 # - 未知 provider：回退 mock。
 def build_llm_client(settings: LLMSettings) -> tuple[LLMClient, list[str]]:
+    from app.config import read_secret
+
+    if settings.strict:
+        if settings.provider not in {"openai", "openai-compatible", "openai_compatible"}:
+            raise ValueError("production requires a supported real LLM provider")
+        if not read_secret(settings.openai.api_key_env):
+            raise ValueError("production requires a model API key")
     # strip().lower() 去除空格并统一小写，避免配置写成 OpenAI 或 " openai " 时无法匹配。
     provider = settings.provider.strip().lower()
     # warnings 收集非致命配置问题，供 LLMTool.startup_warnings 保存。
@@ -694,7 +704,7 @@ def build_llm_client(settings: LLMSettings) -> tuple[LLMClient, list[str]]:
     # OpenAI 兼容 provider 支持多种配置别名。
     if provider in {"openai", "openai-compatible", "openai_compatible"}:
         # API Key 环境变量名称也来自配置，便于兼容不同部署环境。
-        api_key = os.getenv(settings.openai.api_key_env, "")
+        api_key = read_secret(settings.openai.api_key_env)
         # 没有 API Key 时不能调用真实服务，明确回退 mock，并记录警告。
         if not api_key:
             message = f"Missing `{settings.openai.api_key_env}`; falling back to mock LLM provider"

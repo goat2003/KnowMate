@@ -46,9 +46,23 @@ func TestAgentProtoContract(t *testing.T) {
 		t.Fatal("AgentService is missing")
 	}
 	// 检查三个 RPC 方法都存在，防止协议被破坏。
-	for _, name := range []string{"HealthCheck", "ProcessArticles", "ProcessFeedback"} {
+	for _, name := range []string{"HealthCheck", "ProcessArticles", "ProcessFeedback", "Chat"} {
 		if service.Methods().ByName(protoreflect.Name(name)) == nil {
 			t.Fatalf("method %s is missing", name)
+		}
+	}
+	for message, fields := range map[string][]string{
+		"ChatRequest":  {"request_id", "user_id", "text", "context_json", "remember"},
+		"ChatResponse": {"result_json"},
+	} {
+		descriptor := file.Messages().ByName(protoreflect.Name(message))
+		if descriptor == nil {
+			t.Fatalf("%s is missing", message)
+		}
+		for _, field := range fields {
+			if descriptor.Fields().ByName(protoreflect.Name(field)) == nil {
+				t.Fatalf("%s.%s is missing", message, field)
+			}
 		}
 	}
 

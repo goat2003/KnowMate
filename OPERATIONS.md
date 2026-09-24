@@ -1,5 +1,11 @@
 # KnowMate 运维手册
 
+本机单管理员部署的已验收入口、真实 API 启用步骤、加密备份及恢复方式见 [本机服务器操作手册](docs/LOCAL_SERVER.md)，实测结果见 [工作报告](docs/LOCAL_SERVER_WORK_REPORT.md)。以下通用配置同时涵盖尚未验收的 Kubernetes 候选环境。
+
+聊天、偏好记忆和微信公众号服务号接入见 [微信聊天接入手册](docs/WECHAT_CHAT.md)，本次验证见 [聊天功能工作报告](docs/WECHAT_CHAT_WORK_REPORT.md)。
+
+普通用户把 `https://你的域名/wechat/chat` 配置到公众号菜单。反向代理需免管理员 Basic Auth 转发 `/wechat/chat` 静态页面及 `/api/wechat/*` 用户 API，并将 `/api/wechat/callback` 原样转发到 GoFrame（不要改写成加密消息回调 `/wechat/callback`）；生产设置 `WECHAT_DEV_ANONYMOUS=false`、HTTPS 域名和 32 位以上 `WECHAT_SESSION_SECRET`。启动示例：`docker compose --env-file .\configs\env\prod.env -f .\docker-compose.prod.yml up -d`。
+
 ## 服务清单
 
 - `goframe-backend`: HTTP API，端口 `8080`，健康检查 `/health`，指标 `/metrics`。

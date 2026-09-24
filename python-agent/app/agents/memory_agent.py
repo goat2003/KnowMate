@@ -126,7 +126,8 @@ class MemoryAgent(BaseAgent):
             inserted = self.milvus_client.insert_memory_vector(
                 f"feedback:{run_id}",
                 embedding,
-                {"source": "feedback", "sentiment": sentiment, "feedback": extracted},
+                {"source": "feedback", "user_id": str(snapshot.get("user_id") or "default-user"),
+                 "sentiment": sentiment, "feedback": extracted},
                 agent_name=self.name,
                 run_id=run_id,
             )

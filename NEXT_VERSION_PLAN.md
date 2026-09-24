@@ -4,7 +4,7 @@
 
 - 增加 Helm Chart，支持 `values-dev.yaml`、`values-test.yaml`、`values-prod.yaml`。
 - 引入 Ingress/TLS、NetworkPolicy、PodDisruptionBudget、HPA 和资源 requests/limits。
-- 增加 schema version 表，记录 migration 文件名、checksum、执行时间、执行人和结果。
+- 已加入 migration 文件名/checksum/执行时间 ledger；后续扩展执行人、失败记录与受控回滚。
 - 将 Markdown 输出迁移到对象存储，并在 GoFrame 中抽象输出适配器。
 
 ## P1: 可靠性与任务系统

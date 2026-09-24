@@ -30,6 +30,7 @@ import (
 	"net/http"
 	// strconv 用于把 query 参数 limit 转成 int。
 	"strconv"
+	"time"
 
 	"knowledge-post-agent/goframe-backend/internal/agentpb"
 	"knowledge-post-agent/goframe-backend/internal/config"
@@ -129,6 +130,7 @@ func (h *Handler) Register(server *ghttp.Server) {
 	server.Group("/", func(group *ghttp.RouterGroup) {
 		// GET /health 同时检查数据库和 Python Agent。
 		group.GET("/health", h.Health)
+		group.GET("/ready", h.Health)
 		group.GET("/metrics", h.Metrics)
 		// POST /runs/articles 触发一次完整文章处理任务。
 		group.POST("/runs/articles", h.RunArticles)
@@ -167,10 +169,16 @@ func (h *Handler) Metrics(r *ghttp.Request) {
 }
 
 func (h *Handler) Health(r *ghttp.Request) {
+	ctx := r.Context()
+	if r.URL.Path == "/ready" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+	}
 	// 默认认为数据库可用。
 	db := g.Map{"status": "ok"}
 	// Ping 使用请求上下文检查 MySQL 连接。
-	if err := h.store.Ping(r.Context()); err != nil {
+	if err := h.store.Ping(ctx); err != nil {
 		// 数据库不可用时，保留错误信息给调用方。
 		db = g.Map{"status": "unavailable", "error": err.Error()}
 	}
@@ -178,7 +186,7 @@ func (h *Handler) Health(r *ghttp.Request) {
 	// 默认认为 Agent 可用，随后通过 gRPC healthcheck 覆盖实际状态。
 	agent := g.Map{"status": "ok"}
 	// 调用 Python Agent HealthCheck。
-	if response, err := h.harness.AgentHealth(r.Context()); err != nil {
+	if response, err := h.harness.AgentHealth(ctx); err != nil {
 		agent = g.Map{"status": "unavailable", "error": err.Error()}
 	} else {
 		// 将 protobuf 响应转换为 JSON 友好的 map。
@@ -190,7 +198,11 @@ func (h *Handler) Health(r *ghttp.Request) {
 		}
 	}
 
-	// 总体 HTTP 层可正常响应时 status 固定为 ok，具体依赖状态在 db/agent 中展示。
+	if r.URL.Path == "/ready" && (db["status"] != "ok" || agent["status"] != "SERVING") {
+		r.Response.WriteStatusExit(503, g.Map{"status": "not_ready"})
+		return
+	}
+	// /health retains its diagnostic response; /ready controls traffic admission.
 	r.Response.WriteJson(g.Map{
 		"status": "ok",
 		"db":     db,

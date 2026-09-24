@@ -166,6 +166,15 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
     def close(self) -> None:
         self.workflow.close()
 
+    def Chat(self, request, context):
+        from app.chat import chat
+        if not request.user_id or not request.text.strip() or len(request.text) > 4000 or len(request.context_json) > 300000:
+            _invalid_argument(context, "invalid chat request")
+        def compute():
+            result = chat(self.workflow.llm_tool, request.text, json.loads(request.context_json or "{}"), request.remember)
+            return agent_pb2.ChatResponse(result_json=json.dumps(result, ensure_ascii=False))
+        return self.response_cache.get_or_compute(_request_key("Chat", request), agent_pb2.ChatResponse, compute)
+
     # 函数作用：
     # gRPC 健康检查接口，用于 GoFrame 或运维侧确认 Python Agent Service 是否可用。
     #

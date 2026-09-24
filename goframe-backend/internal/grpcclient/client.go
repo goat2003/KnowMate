@@ -68,6 +68,13 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+func (c *Client) Chat(ctx context.Context, request *agentpb.ChatRequest) (*agentpb.ChatResponse, error) {
+	started := time.Now()
+	response, err := c.service.Chat(c.withAuth(ctx), request)
+	recordGRPCClient(ctx, "Chat", err, started)
+	return response, err
+}
+
 // HealthCheck 调用 Python Agent HealthCheck RPC。
 func (c *Client) HealthCheck(ctx context.Context) (*agentpb.HealthCheckResponse, error) {
 	started := time.Now()

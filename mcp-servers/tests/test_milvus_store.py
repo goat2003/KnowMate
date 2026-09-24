@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 import unittest
 
@@ -71,6 +72,20 @@ class FakeMilvusClient:
 
 
 class MilvusStoreTest(unittest.TestCase):
+    def test_real_upsert_result_is_json_serializable(self) -> None:
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto
+
+        class Client:
+            def upsert(self, **kwargs):
+                # Same protobuf repeated-container boundary as PyMilvus IDs.
+                return {"upsert_count": 1, "ids": FileDescriptorProto(dependency=["feedback-test"]).dependency}
+
+        store = MilvusVectorStore(client=Client(), dimension=3)
+        result = store.upsert({"id": "feedback-test", "embedding": [1, 0, 0]})
+        self.assertEqual(json.loads(json.dumps(result))["id"], "feedback-test")
+        self.assertTrue(result["upserted"])
+        self.assertEqual(result["result"]["ids"], ["feedback-test"])
+
     def test_stable_id_is_repeatable_and_changes_with_user(self) -> None:
         first = stable_memory_id("u1", "feedback", "external-1", "")
         second = stable_memory_id("u1", "feedback", "external-1", "")

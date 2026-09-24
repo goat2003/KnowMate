@@ -1,6 +1,22 @@
 groups:
   - name: knowmate-observability
     rules:
+      - alert: KnowMateBackupOverdue
+        expr: time() - knowmate_local_backup_last_success_timestamp_seconds > 129600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: KnowMate local backup is missing or older than 36 hours
+
+      - alert: KnowMateLocalDiskLow
+        expr: knowmate_local_disk_free_ratio < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: KnowMate local disk has less than ten percent free space
+
       - alert: KnowMateServiceDown
         expr: up{job=~"goframe-backend|python-agent|mcp-servers|otel-collector"} == 0
         for: 2m

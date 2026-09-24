@@ -1,0 +1,163 @@
+[
+  {
+    "type": "questionnaire_title",
+    "questionnaire_id": "NSDF",
+    "version": "01"
+  },
+  {
+    "question_id": "basic_profile",
+    "type": "fields",
+    "fields": ["gender", "age: yyyy-mm-dd", "city", "school_or_company", "occupation"],
+    "gender_options": ["女", "男", "其他", "暂不说明"],
+    "age_range_options": ["18 岁以下", "18-21", "22-25", "26-30", "31-35", "36+", "暂不说明"],
+    "prompt": "先简单介绍一下你自己，可选填",
+    "free_text_placeholder": "可以补充一句近况，比如：刚来杭州，想认识周末一起运动的人"
+  },
+  {
+    "question_id": "social_goal",
+    "type": "multi_choice",
+    "options": [
+      "同城朋友",
+      "兴趣搭子",
+      "运动搭子",
+      "学习 / 工作伙伴",
+      "线上聊天朋友",
+      "一起参加活动的人",
+      "先随便看看"
+    ],
+    "max_selection": 3,
+    "prompt": "你现在最想认识哪类新朋友？",
+    "free_text_placeholder": "比如：想找周末羽毛球搭子，或者下班后能一起吃饭聊天的人"
+  },
+  {
+    "question_id": "interest_tags",
+    "type": "multi_choice",
+    "options": [
+      "跑步","羽毛球","篮球","健身","骑行","徒步","游泳",
+      "电影","剧集","音乐","阅读","摄影","看展","二次元",
+      "咖啡","美食探店","旅行","城市漫游","宠物","手作","做饭 / 烘焙",
+      "电子游戏","桌游","科技数码","编程","AI",
+      "语言交换","心理成长","公益志愿","创业","自习 / 共学"
+    ],
+    "min_selection": 3,
+    "max_selection": 8,
+    "prompt": "选择 3-8 个最能代表你的兴趣标签",
+    "free_text_placeholder": "可以补充更具体的偏好，比如：喜欢悬疑电影、City Pop、周末徒步"
+  },
+  {
+    "question_id": "free_time_scene",
+    "type": "single_choice",
+    "options": [
+      "找个咖啡馆慢慢聊天",
+      "约人运动出汗",
+      "看展、看电影或看演出",
+      "去自习或一起练技能",
+      "线上开黑或语音聊天",
+      "城市漫游、拍照、探店",
+      "宅着充电，看看内容或休息"
+    ],
+    "prompt": "如果周末突然空出半天，你更想怎么度过？",
+    "free_text_placeholder": "比如：看天气和状态，晴天想出门，雨天想在家看电影"
+  },
+  {
+    "question_id": "conversation_topics",
+    "type": "multi_choice",
+    "options": [
+      "最近看的电影、听的歌、读的书",
+      "运动、健身、户外",
+      "美食、咖啡、城市生活",
+      "学校 / 工作日常",
+      "游戏、桌游、线上娱乐",
+      "宠物",
+      "旅行和有趣经历",
+      "科技、AI、学习成长"
+    ],
+    "min_selection": 2,
+    "max_selection": 6,
+    "prompt": "别人用哪些话题开启聊天，你会更愿意接？",
+    "free_text_placeholder": "比如：别上来就查户口，先聊最近看了什么更舒服"
+  },
+  {
+    "question_id": "social_recharge_style",
+    "type": "single_choice",
+    "options": [
+      "约朋友出来聊聊，会恢复得更快",
+      "只想见熟人或小范围朋友",
+      "更想自己待着恢复",
+      "看当天状态，不固定"
+    ],
+    "prompt": "连续几天忙碌后，你更想怎么放松？",
+    "free_text_placeholder": "比如：上班日只想安静，周末可以小范围见朋友"
+  },
+  {
+    "question_id": "new_activity_reaction",
+    "type": "single_choice",
+    "options": [
+      "立刻想去，越新鲜越好",
+      "感兴趣会去，但想先了解一下",
+      "如果有熟人一起就可以",
+      "更愿意选择熟悉的活动"
+    ],
+    "prompt": "朋友邀请你尝试一个没玩过的活动，你通常会？",
+    "free_text_placeholder": "比如：运动类愿意尝试，但太社牛的局会犹豫"
+  },
+  {
+    "question_id": "plan_style",
+    "type": "single_choice",
+    "options": [
+      "时间、地点、流程都提前定好",
+      "有大致方向就行",
+      "见面后边走边决定",
+      "看和谁约，不同人不一样"
+    ],
+    "prompt": "约人出门前，你通常更喜欢哪种安排？",
+    "free_text_placeholder": "比如：第一次见面要明确一点，熟了以后可以随性"
+  },
+  {
+    "question_id": "skill_tags",
+    "type": "multi_choice",
+    "options": [
+      "摄影 / 修图","剪辑","绘画","写作","乐器 / 唱歌",
+      "编程","AI 工具","外语","考试 / 学习方法","数据分析",
+      "做饭 / 烘焙","运动专项","桌游组织","活动策划","旅行规划"
+    ],
+    "prompt": "你有哪些技能、特长，或者正在学习的东西？",
+    "free_text_placeholder": "比如：羽毛球打得还不错，摄影刚入门，想找人一起练"
+  },
+  {
+    "question_id": "skill_social_mode",
+    "type": "multi_choice",
+    "options": [
+      "找同水平的人一起练",
+      "可以带新手入门",
+      "想找人教我",
+      "先展示作品或成果就好",
+      "更想线下一起练"
+    ],
+    "max_selection": 3,
+    "prompt": "关于这些技能，你更希望怎么和别人连接？",
+    "free_text_placeholder": "比如：可以教别人修图，但编程希望有人带我"
+  },
+  {
+    "question_id": "match_preference",
+    "type": "multi_choice",
+    "options": [
+      "同城的人",
+      "兴趣相近的人",
+      "同校 / 同公司 / 同行业的人",
+      "技能互补的人",
+      "生活节奏相近的人",
+      "和我不太一样但有趣的人"
+    ],
+    "max_selection": 4,
+    "prompt": "你更希望认识哪类人？",
+    "free_text_placeholder": "比如：优先同城和同兴趣，线上朋友也可以"
+  },
+  {
+    "question_id": "profile_prompt",
+    "type": "text",
+    "prompt_id": "recently_into",
+    "prompt": "选一个你愿意展示在资料页上的破冰句，并补全它",
+    "free_text_placeholder": "比如：我最近沉迷的是周末 city walk 和拍胶片"
+  }
+]

@@ -1,3 +1,4 @@
+-c ../shared/python-security-constraints.txt
 grpcio>=1.64,<2
 grpcio-tools>=1.64,<2
 protobuf>=5,<7

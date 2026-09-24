@@ -23,6 +23,8 @@ package config
 import (
 	// context.Context 作为 GoFrame/服务调用中的标准上下文类型。
 	"context"
+	"fmt"
+	"strings"
 	// os 用于读取环境变量和配置文件。
 	"os"
 	// filepath 用于拼接默认配置文件路径。
@@ -55,6 +57,8 @@ type Config struct {
 	Output OutputConfig `yaml:"output"`
 	// Profile 保存默认用户画像配置。
 	Profile ProfileConfig `yaml:"profile"`
+	WeChat  WeChatConfig  `yaml:"wechat"`
+	Memory  MemoryConfig  `yaml:"memory"`
 }
 
 // ServerConfig 保存 HTTP Server 监听地址。
@@ -151,6 +155,27 @@ type OutputConfig struct {
 }
 
 // ProfileConfig 保存默认用户画像配置。
+type WeChatConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	AppID          string `yaml:"app_id"`
+	AppSecret      string `yaml:"app_secret"`
+	OAuthRedirect  string `yaml:"oauth_redirect_uri"`
+	ChatPageURL    string `yaml:"chat_page_url"`
+	SessionSecret  string `yaml:"session_secret"`
+	AllowedOrigins string `yaml:"allowed_origins"`
+	DevAnonymous   bool   `yaml:"dev_anonymous"`
+}
+
+// MemoryConfig configures the private Mem_Pro provider. It is never exposed
+// through ordinary-user responses; only the backend uses these values.
+type MemoryConfig struct {
+	URL                 string `yaml:"url"`
+	Token               string `yaml:"token"`
+	RoleSecret          string `yaml:"role_secret"`
+	TimeoutSeconds      int    `yaml:"timeout_seconds"`
+	BuildTimeoutSeconds int    `yaml:"build_timeout_seconds"`
+}
+
 type ProfileConfig struct {
 	// UserID 是默认用户 id。
 	UserID string `yaml:"user_id"`
@@ -218,6 +243,19 @@ func Load(ctx context.Context) Config {
 	overrideInt("HARNESS_MAX_RETRY_DELAY_MILLISECONDS", &cfg.Harness.MaxRetryDelayMilliseconds)
 	cfg.Security.APIToken = envOrDefault("GOFRAME_API_TOKEN", cfg.Security.APIToken)
 	cfg.Security.APIToken = envOrDefault("API_TOKEN", cfg.Security.APIToken)
+	cfg.WeChat.Enabled = strings.EqualFold(envOrDefault("WECHAT_ENABLED", fmt.Sprint(cfg.WeChat.Enabled)), "true")
+	cfg.WeChat.AppID = envOrDefault("WECHAT_APP_ID", cfg.WeChat.AppID)
+	cfg.WeChat.AppSecret = envOrDefault("WECHAT_APP_SECRET", cfg.WeChat.AppSecret)
+	cfg.WeChat.OAuthRedirect = envOrDefault("WECHAT_OAUTH_REDIRECT_URI", cfg.WeChat.OAuthRedirect)
+	cfg.WeChat.ChatPageURL = envOrDefault("WECHAT_CHAT_PAGE_URL", cfg.WeChat.ChatPageURL)
+	cfg.WeChat.SessionSecret = envOrDefault("WECHAT_SESSION_SECRET", cfg.WeChat.SessionSecret)
+	cfg.WeChat.AllowedOrigins = envOrDefault("WECHAT_ALLOWED_ORIGINS", cfg.WeChat.AllowedOrigins)
+	cfg.WeChat.DevAnonymous = strings.EqualFold(envOrDefault("WECHAT_DEV_ANONYMOUS", fmt.Sprint(cfg.WeChat.DevAnonymous)), "true")
+	cfg.Memory.URL = envOrDefault("MEMORY_PROVIDER_URL", cfg.Memory.URL)
+	cfg.Memory.Token = envOrDefault("MEMORY_PROVIDER_TOKEN", cfg.Memory.Token)
+	cfg.Memory.RoleSecret = envOrDefault("MEMORY_ROLE_SECRET", cfg.Memory.RoleSecret)
+	overrideInt("MEMORY_PROVIDER_TIMEOUT_SECONDS", &cfg.Memory.TimeoutSeconds)
+	overrideInt("MEMORY_PROVIDER_BUILD_TIMEOUT_SECONDS", &cfg.Memory.BuildTimeoutSeconds)
 	overrideInt64("GOFRAME_MAX_REQUEST_BODY_BYTES", &cfg.Security.MaxRequestBodyBytes)
 	overrideInt("GOFRAME_RATE_LIMIT_BURST", &cfg.Security.RateLimitBurst)
 	// Normalize 补齐空值和非法值。
@@ -233,6 +271,9 @@ func Load(ctx context.Context) Config {
 // 返回值：
 // - 返回补齐后的 Config。
 func (c Config) Normalize() Config {
+	if c.WeChat.ChatPageURL == "" {
+		c.WeChat.ChatPageURL = "/wechat/chat"
+	}
 	// HTTP 地址为空时使用 :8080。
 	if c.Server.Address == "" {
 		c.Server.Address = ":8080"
@@ -254,6 +295,12 @@ func (c Config) Normalize() Config {
 	}
 	if c.Security.RateLimitBurst <= 0 {
 		c.Security.RateLimitBurst = 120
+	}
+	if c.Memory.TimeoutSeconds <= 0 {
+		c.Memory.TimeoutSeconds = 10
+	}
+	if c.Memory.BuildTimeoutSeconds <= 0 {
+		c.Memory.BuildTimeoutSeconds = 180
 	}
 	if c.Crawler.UserAgent == "" {
 		c.Crawler.UserAgent = "KnowMateCrawler/1.0"
@@ -378,6 +425,8 @@ func defaults() Config {
 			UserID:    "default-user",
 			Interests: "AI,knowledge-management,engineering",
 		},
+		WeChat: WeChatConfig{ChatPageURL: "/wechat/chat", DevAnonymous: false},
+		Memory: MemoryConfig{TimeoutSeconds: 10, BuildTimeoutSeconds: 180},
 	}
 }
 
@@ -391,11 +440,52 @@ func defaults() Config {
 // 返回值：
 // - 返回环境变量值或 fallback。
 func envOrDefault(key string, fallback string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			panic(fmt.Sprintf("cannot read %s_FILE", key))
+		}
+		return strings.TrimSpace(string(data))
+	}
 	// os.Getenv 不区分变量不存在和变量为空字符串；本项目把空字符串视为未设置。
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return fallback
+}
+
+// ValidateProduction refuses development defaults before touching the database.
+func (c Config) ValidateProduction() error {
+	env := strings.ToLower(os.Getenv("APP_ENV"))
+	if env != "prod" && env != "production" {
+		return nil
+	}
+	if c.WeChat.DevAnonymous {
+		return fmt.Errorf("production cannot enable WECHAT_DEV_ANONYMOUS")
+	}
+	if c.WeChat.Enabled && (c.WeChat.AppID == "" || c.WeChat.AppSecret == "" || len(c.WeChat.SessionSecret) < 32 || c.WeChat.OAuthRedirect == "") {
+		return fmt.Errorf("enabled WeChat OAuth requires app id, app secret, redirect URI, and a 32+ character session secret")
+	}
+	if len(c.Security.APIToken) < 32 || len(c.Agent.AuthToken) < 32 {
+		return fmt.Errorf("production requires HTTP and gRPC tokens of at least 32 characters")
+	}
+	if os.Getenv("CONFIG_PATH") == "" {
+		return fmt.Errorf("production requires an explicit crawler CONFIG_PATH")
+	}
+	count := 0
+	for _, source := range c.Crawler.Sources {
+		if !source.Enabled {
+			continue
+		}
+		count++
+		if source.Type == "mock" || !strings.HasPrefix(source.URL, "https://") {
+			return fmt.Errorf("production crawler sources must use HTTPS and cannot be mock")
+		}
+	}
+	if count == 0 {
+		return fmt.Errorf("production requires at least one enabled crawler source")
+	}
+	return nil
 }
 
 func overrideInt(key string, target *int) {

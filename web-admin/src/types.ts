@@ -139,3 +139,36 @@ export interface FeedbackResult {
   updated_profile_snapshot?: Record<string, string>;
   error?: string;
 }
+
+export interface ChatMemory {
+  key: string;
+  value: string;
+  evidence: string;
+  source_job_id: number;
+}
+export interface ChatResult {
+  reply: string;
+  memory_updates: ChatMemory[];
+  recommendations: Array<{ id: string; title: string; summary?: string; url: string; reason: string; published_at?: string; score: number }>;
+  mock: boolean;
+  memory_status?: "disabled" | "pending" | "saved" | "unavailable" | string;
+}
+export interface ChatMessage {
+  id: number;
+  request_id: string;
+  user_id: string;
+  channel: string;
+  text: string;
+  remember: boolean;
+  status: string;
+  result: ChatResult | null;
+  error: string;
+  delivery: string;
+}
+export interface WeChatStatus {
+  enabled: boolean;
+  callback_path: string;
+  mode: string;
+  reply_window_hours: number;
+  max_messages_per_interaction: number;
+}

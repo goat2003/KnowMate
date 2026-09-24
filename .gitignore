@@ -7,9 +7,16 @@ __pycache__/
 venv/
 .env
 configs/env/prod.env
+configs/env/wechat.env
 configs/crawler/prod.sources.yaml
 .worktrees/
 artifacts/
+.local-server/
+output/playwright/
+.coverage
 web-admin/dist/
 shared/outputs/*.md
 !shared/outputs/.gitkeep
+**/%SystemDrive%/
+**/*.sqlite3
+goframe-backend/internal/logic/harness/test-output/*.md

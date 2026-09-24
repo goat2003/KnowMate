@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from urllib.parse import urlparse
 
 from app.recommendation import RecommendationSettings
 
@@ -107,6 +108,7 @@ class ClaudeSettings:
 # provider 决定 build_llm_client 选择 mock、openai-compatible 还是 claude。
 @dataclass(slots=True)
 class LLMSettings:
+    strict: bool = False
     # 默认使用 mock，保证本地没有 API Key 时也能运行。
     provider: str = "mock"
     # field(default_factory=...) 避免多个 LLMSettings 实例共享同一个 OpenAISettings 对象。
@@ -130,6 +132,7 @@ class McpServerSettings:
 # server.py、grpc_server.py、workflow/graph.py 都会读取它。
 @dataclass(slots=True)
 class Settings:
+    environment: str = "development"
     # host 是 gRPC Server 监听地址。
     host: str = "0.0.0.0"
     # port 是 gRPC Server 监听端口。
@@ -194,13 +197,14 @@ def load_settings() -> Settings:
     # 创建最终 Settings；每个字段都允许环境变量覆盖 YAML。
     mock_mcp = _bool_env("MOCK_MCP", bool(mock.get("mcp", True)))
     mcp_servers = _load_mcp_servers(mcp, mock_mcp)
-    return Settings(
+    settings = Settings(
+        environment=os.getenv("APP_ENV", "development").strip().lower(),
         host=os.getenv("AGENT_HOST", agent.get("host", "0.0.0.0")),
         port=int(os.getenv("AGENT_PORT", agent.get("port", 50051))),
         metrics_host=os.getenv("METRICS_HOST", agent.get("metrics_host", "0.0.0.0")),
         metrics_port=int(os.getenv("METRICS_PORT", agent.get("metrics_port", 9101))),
         version=os.getenv("AGENT_VERSION", agent.get("version", "0.1.0")),
-        api_token=os.getenv("AGENT_GRPC_AUTH_TOKEN", agent.get("api_token", "")),
+        api_token=read_secret("AGENT_GRPC_AUTH_TOKEN") or agent.get("api_token", ""),
         # mock_llm 由最终 provider 是否为 mock 推导，避免 YAML 和实际 provider 不一致。
         mock_llm=llm_settings.provider == "mock",
         # MOCK_MCP 环境变量优先，其次使用 config.yaml 中 mock.mcp，最后默认 True。
@@ -239,6 +243,37 @@ def load_settings() -> Settings:
             "neo4j": os.getenv("NEO4J_MCP_URL", mcp.get("neo4j", "http://127.0.0.1:7004")),
         },
     )
+    validate_production_settings(settings)
+    return settings
+
+
+def read_secret(name: str) -> str:
+    """Read a mounted secret without including its value in diagnostics."""
+    path = os.getenv(f"{name}_FILE", "")
+    if path:
+        return Path(path).read_text(encoding="utf-8").strip()
+    return os.getenv(name, "").strip()
+
+
+def validate_production_settings(settings: Settings) -> None:
+    if settings.environment not in {"prod", "production"}:
+        return
+    settings.llm.strict = True
+    if settings.mock_llm or settings.mock_mcp or settings.mcp_memory_fallback:
+        raise ValueError("production forbids mock LLM, mock MCP and memory fallback")
+    if len(settings.api_token) < 32:
+        raise ValueError("production requires AGENT_GRPC_AUTH_TOKEN with at least 32 characters")
+    if settings.llm.provider not in {"openai", "openai-compatible", "openai_compatible"}:
+        raise ValueError("production deployment requires an OpenAI-compatible JSON chat API")
+    if not read_secret(settings.llm.openai.api_key_env):
+        raise ValueError("production requires a model API key")
+    endpoint = urlparse(settings.llm.openai.base_url)
+    if endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.password:
+        raise ValueError("production model base URL must use HTTPS without embedded credentials")
+    if not settings.llm.openai.model.strip():
+        raise ValueError("production requires OPENAI_MODEL")
+    if not settings.mcp_servers or any(s.transport == "memory" for s in settings.mcp_servers.values()):
+        raise ValueError("production requires real MCP transports")
 
 
 def _load_mcp_servers(raw: dict[str, Any], mock_mcp: bool) -> dict[str, McpServerSettings]:

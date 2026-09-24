@@ -4,6 +4,8 @@
 >
 > 本文件是中文镜像文档，不替换仓库根目录原始 README。命令、路径、环境变量、API 路由、表名和代码标识保持原样，便于与英文原文对照。
 
+当前开发环境可使用 [一键启动脚本](../../scripts/start-all.ps1) 启动 Docker 服务和 Web Admin；整体进度见根目录 [项目进度](../../项目进度.md)。
+
 `knowledge-post-agent` 是一个用于个性化知识内容摘要与知识推文生成的 MVP monorepo。它围绕 GoFrame、Python gRPC、LangGraph、官方 Model Context Protocol Python SDK、MySQL、Milvus 和 Neo4j 构建。
 
 当前重点是可运行的 Python Agent Service，使用 `grpcio + protobuf`。LLM、MCP、Milvus 和 Neo4j 默认以 mock 或 memory 模式运行，方便本地开发和自动化测试。
@@ -572,9 +574,8 @@ $env:NEO4J_PASSWORD="..."
 
 ```powershell
 docker compose `
-  -f docker-compose.yml `
-  -f docker-compose.production.yml `
-  --profile production `
+  --env-file configs/env/prod.env `
+  -f docker-compose.prod.yml `
   up -d --build
 ```
 

@@ -37,8 +37,11 @@ import agent_pb2
 
 # 读取 AgentService 描述，确认关键 RPC 方法存在。
 service = agent_pb2.DESCRIPTOR.services_by_name["AgentService"]
-for name in ["HealthCheck", "ProcessArticles", "ProcessFeedback"]:
+for name in ["HealthCheck", "ProcessArticles", "ProcessFeedback", "Chat"]:
     assert name in service.methods_by_name, name
+for name in ["request_id", "user_id", "text", "context_json", "remember"]:
+    assert name in agent_pb2.ChatRequest.DESCRIPTOR.fields_by_name, name
+assert "result_json" in agent_pb2.ChatResponse.DESCRIPTOR.fields_by_name
 # 检查 Article 输入字段。
 article = agent_pb2.Article.DESCRIPTOR
 for name in ["article_id", "url", "title", "raw_text", "source", "published_at", "tags"]:
@@ -65,6 +68,7 @@ for name in [
     assert name in feedback.fields_by_name, name
 print("python proto contract ok")
 '@ | & $Python -
+if ($LASTEXITCODE -ne 0) { throw "python proto contract test failed" }
 Pop-Location
 
 # 进入 GoFrame 后端目录，运行 Go 端 protobuf 契约测试。

@@ -208,10 +208,23 @@ message HealthCheckResponse {
 
 // AgentService 定义 GoFrame 后端可远程调用的 Python Agent gRPC 服务。
 service AgentService {
+  rpc Chat(ChatRequest) returns (ChatResponse);
   // HealthCheck 用于检查 Python Agent Service 是否在线。
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
   // ProcessArticles 触发文章筛选、摘要、改写和校验流程。
   rpc ProcessArticles(ProcessArticlesRequest) returns (ProcessArticlesResponse);
   // ProcessFeedback 触发反馈提取和用户画像更新流程。
   rpc ProcessFeedback(ProcessFeedbackRequest) returns (ProcessFeedbackResponse);
+}
+
+// Conversation state is supplied by Go; the Agent is stateless and cannot select another user.
+message ChatRequest {
+  string request_id = 1;
+  string user_id = 2;
+  string text = 3;
+  string context_json = 4;
+  bool remember = 5;
+}
+message ChatResponse {
+  string result_json = 1;
 }

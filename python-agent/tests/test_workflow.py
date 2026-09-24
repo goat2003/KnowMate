@@ -85,7 +85,7 @@ class ArticleWorkflowTest(unittest.TestCase):
         result = workflow.process_feedback(
             {
                 "run_id": "feedback-run",
-                "user_profile_snapshot": {"feedback_count": "1"},
+                "user_profile_snapshot": {"feedback_count": "1", "user_id": "feedback-owner"},
                 "mcp_policy": {
                     "mock_transport": True,
                     "enable_embedding": True,
@@ -109,6 +109,9 @@ class ArticleWorkflowTest(unittest.TestCase):
         self.assertTrue(all(log["run_id"] == "feedback-run" for log in result["mcp_call_logs"]))
         self.assertTrue(all(log["agent_name"] == "memory" for log in result["mcp_call_logs"]))
         self.assertTrue(any(log["tool_name"] == "insert_memory_vector" for log in result["mcp_call_logs"]))
+        vector_log = next(log for log in result["mcp_call_logs"] if log["tool_name"] == "insert_memory_vector")
+        payload = json.loads(vector_log["request_json"])
+        self.assertEqual(payload["params"]["arguments"]["metadata"]["user_id"], "feedback-owner")
 
     def test_feedback_workflow_returns_structured_feedback(self) -> None:
         workflow = ArticleWorkflow(Settings(mock_mcp=True))

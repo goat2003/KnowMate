@@ -1,4 +1,4 @@
-FROM golang:1.25.11-alpine AS build
+FROM golang:1.26.8-alpine AS build
 
 WORKDIR /src/goframe-backend
 COPY goframe-backend/go.mod goframe-backend/go.sum ./
@@ -25,5 +25,5 @@ RUN chmod +x ./goframe-backend /app/scripts/run_migrations.sh \
 EXPOSE 8080
 USER knowmate
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1
+  CMD wget -qO- http://127.0.0.1:8080/ready >/dev/null || exit 1
 ENTRYPOINT ["./goframe-backend"]

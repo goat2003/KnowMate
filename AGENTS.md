@@ -28,7 +28,7 @@ KnowMate is an admin-first, asynchronous knowledge-content pipeline. GoFrame own
 
 ## Documentation
 
-- `README.md`, `ARCHITECTURE.md`, `OPERATIONS.md`, `SECURITY.md`, and `RELEASE_CHECKLIST.md` are the current user and operator references.
+- `README.md`, `ARCHITECTURE.md`, `OPERATIONS.md`, `SECURITY.md`, and `RELEASE_CHECKLIST.md` are the current user and operator references; `docs/INDEX.md` classifies current docs versus historical evidence.
 - Dated files under `docs/superpowers/` are plans or design history, not proof of current behavior.
 - `docs/zh-CN/INDEX.md` maps maintained Chinese mirrors. When a change intentionally includes that directory, keep the source/mirror mapping current.
 

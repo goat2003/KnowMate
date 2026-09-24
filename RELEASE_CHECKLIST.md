@@ -2,12 +2,16 @@
 
 本文用于发布 `knowledge-post-agent` 生产候选版本。默认发布目标为 Docker Compose 或 Kubernetes，服务包含 GoFrame Backend、Python Agent、四个 MCP Server、Web Admin、MySQL、Milvus、Neo4j 与观测组件。
 
+2026-09-19 本机单管理员范围的已完成项及真实模型待验收项单独记录在 [本机工作报告](docs/LOCAL_SERVER_WORK_REPORT.md)。下列通用清单不因本机演练而自动勾选，尤其不代表 Kubernetes 或公网部署已通过。
+
 ## 发布前冻结
 
 - [ ] 确认当前分支没有未解释的业务改动：`git status --short`
 - [ ] 确认 `.env`、真实密钥、数据库 dump、私钥没有进入提交：`python scripts/check_secrets.py --all`
 - [ ] 确认版本号、镜像 tag、发布窗口和回滚负责人已经记录。
 - [ ] 确认生产 secret 已在目标环境创建：`MYSQL_PASSWORD`、`GOFRAME_API_TOKEN`、`AGENT_GRPC_AUTH_TOKEN`、`OPENAI_API_KEY`、`NEO4J_PASSWORD`、`MINIO_ROOT_PASSWORD`、`GRAFANA_ADMIN_PASSWORD`。
+- [ ] 如启用微信公众号网页聊天，创建 `WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_SESSION_SECRET`（仅 Secret 管理器），设置 `WECHAT_OAUTH_REDIRECT_URI=https://你的域名/api/wechat/callback`、`WECHAT_CHAT_PAGE_URL=https://你的域名/wechat/chat`、`WECHAT_ALLOWED_ORIGINS`，并明确 `WECHAT_DEV_ANONYMOUS=false`。
+- [ ] 在微信公众平台配置网页授权域名与菜单链接 `/wechat/chat`；确认反向代理对 `/api/wechat/*` 关闭管理 Basic Auth，仅允许 HTTPS。
 - [ ] 确认生产抓取源文件已经替换或批准使用默认英文公开示例：`configs/crawler/prod.sources.example.yaml` 或受控 `configs/crawler/prod.sources.yaml`。
 - [ ] 确认生产 enabled 源不包含 `mock://sample`，并已复核授权、服务条款、robots.txt、请求频率、缓存策略和失败降级。
 

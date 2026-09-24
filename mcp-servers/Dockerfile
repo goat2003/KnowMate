@@ -5,8 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MCP_SERVER=embedding-mcp
 
 WORKDIR /app
+COPY shared/python-security-constraints.txt /app/shared/python-security-constraints.txt
 COPY mcp-servers/requirements.txt /app/mcp-servers/requirements.txt
-RUN pip install --no-cache-dir -r /app/mcp-servers/requirements.txt
+RUN pip install --no-cache-dir --upgrade "pip>=26.2" "setuptools>=83" \
+    && pip install --no-cache-dir -r /app/mcp-servers/requirements.txt
 COPY mcp-servers/ /app/mcp-servers/
 RUN groupadd --system --gid 10001 knowmate \
     && useradd --system --uid 10001 --gid knowmate --home-dir /app --shell /usr/sbin/nologin knowmate \

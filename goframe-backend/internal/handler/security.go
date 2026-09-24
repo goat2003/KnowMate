@@ -66,7 +66,7 @@ func (m *securityMiddleware) Handle(r *ghttp.Request) {
 }
 
 func (m *securityMiddleware) isPublicPath(path string) bool {
-	return path == "/health"
+	return path == "/health" || path == "/ready" || path == "/wechat/callback" || strings.HasPrefix(path, "/wechat/auth") || strings.HasPrefix(path, "/wechat/callback") || strings.HasPrefix(path, "/wechat/me") || strings.HasPrefix(path, "/wechat/conversations") || strings.HasPrefix(path, "/wechat/messages") || strings.HasPrefix(path, "/wechat/memories") || strings.HasPrefix(path, "/wechat/recommendations") || strings.HasPrefix(path, "/api/wechat/")
 }
 
 func (m *securityMiddleware) authorized(r *ghttp.Request) bool {

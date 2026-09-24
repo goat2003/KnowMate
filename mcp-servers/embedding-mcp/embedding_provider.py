@@ -4,6 +4,7 @@ from collections import OrderedDict
 from copy import deepcopy
 import hashlib
 import math
+import os
 import re
 import time
 from typing import Any
@@ -142,6 +143,8 @@ class OpenAIEmbeddingProvider:
             timeout=self.timeout_seconds,
             max_retries=0,
         )
+        if os.getenv("APP_ENV", "").lower() in {"prod", "production"}:
+            self.embed_text("KnowMate embedding readiness probe")
 
     def close(self) -> None:
         close = getattr(self.client, "close", None)

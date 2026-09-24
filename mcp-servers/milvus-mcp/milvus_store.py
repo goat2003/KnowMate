@@ -290,7 +290,11 @@ class MilvusVectorStore:
             data=prepared,
             timeout=self.timeout_seconds,
         )
-        return {"upserted_count": len(prepared), "ids": [item["id"] for item in prepared], "result": result, "mock": False}
+        # PyMilvus returns protobuf repeated containers for IDs. Never expose
+        # SDK-specific objects across the JSON MCP boundary after a committed write.
+        summary = {"upsert_count": int(result.get("upsert_count", len(prepared))),
+                   "ids": [str(value) for value in result.get("ids", [])]}
+        return {"upserted_count": len(prepared), "ids": [item["id"] for item in prepared], "result": summary, "mock": False}
 
     def search(
         self,

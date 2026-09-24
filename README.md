@@ -6,6 +6,12 @@ The current focus is a runnable Python Agent Service using `grpcio + protobuf`. 
 
 Security hardening notes are in [SECURITY.md](SECURITY.md). In production, set `GOFRAME_API_TOKEN` for the HTTP API and `AGENT_GRPC_AUTH_TOKEN` on both GoFrame and Python Agent so gRPC calls are authenticated.
 
+For the isolated Windows local server (HTTPS admin gateway, real databases, encrypted backups, and model API preflight), see [本机服务器操作手册](docs/LOCAL_SERVER.md) and [验收工作报告](docs/LOCAL_SERVER_WORK_REPORT.md). Development defaults above remain mock-based.
+
+当前开发环境可使用 [一键启动脚本](scripts/start-all.ps1) 启动 Docker 服务和 Web Admin；整体进度见 [项目进度](项目进度.md)。
+
+The admin now includes a conversation page with editable preference memory and article recommendations. Ordinary WeChat users can open `https://your-domain.example/wechat/chat` from a public-account menu; the backend performs `snsapi_base` OAuth and keeps the user identity in a signed HttpOnly cookie. The optional encrypted service-account callback shares this conversation backend; see [微信聊天接入手册](docs/WECHAT_CHAT.md). Actual OAuth and WeChat delivery require account credentials, HTTPS, and a publicly reachable callback.
+
 ## Layout
 
 ```text
@@ -565,9 +571,8 @@ Start the production dependency stack and real MCP adapters:
 
 ```powershell
 docker compose `
-  -f docker-compose.yml `
-  -f docker-compose.production.yml `
-  --profile production `
+  --env-file configs/env/prod.env `
+  -f docker-compose.prod.yml `
   up -d --build
 ```
 

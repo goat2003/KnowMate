@@ -25,6 +25,7 @@ import (
 	// fmt 用于向 stderr 输出 healthcheck 错误。
 	"fmt"
 	// os 用于读取命令行参数、stdout/stderr 和进程退出码。
+	"knowledge-post-agent/goframe-backend/internal/chat"
 	"os"
 	"time"
 
@@ -61,6 +62,10 @@ func main() {
 	ctx := gctx.GetInitCtx()
 	// 加载后端配置，包含 HTTP 地址、Agent gRPC 地址、MySQL DSN、RSS 源等。
 	cfg := config.Load(ctx)
+	if err := cfg.ValidateProduction(); err != nil {
+		fmt.Fprintf(os.Stderr, "production configuration rejected: %v\n", err)
+		os.Exit(1)
+	}
 	shutdown, err := observability.Init(ctx, observability.OptionsFromEnv("goframe-backend"))
 	if err != nil {
 		_ = observability.WriteJSONLog(os.Stderr, ctx, "goframe-backend", "warning", "observability init failed", map[string]any{"error": err})
@@ -119,6 +124,18 @@ func main() {
 	server.SetGracefulShutdownTimeout(15)
 	// 注册 /health、/runs/articles、/feedback、/posts、/run-logs 等路由。
 	httpHandler.Register(server)
+	chatService, err := chat.New(cfg, mysqlStore)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "chat configuration rejected: %v\n", err)
+		os.Exit(1)
+	}
+	chatCtx, stopChat := context.WithCancel(ctx)
+	defer stopChat()
+	if err = chatService.Start(chatCtx); err != nil {
+		fmt.Fprintln(os.Stderr, "chat startup failed; apply database migrations")
+		os.Exit(1)
+	}
+	chatService.Register(server)
 	// 启动 HTTP 服务并阻塞当前进程。
 	server.Run()
 }

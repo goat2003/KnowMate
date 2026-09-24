@@ -44,11 +44,30 @@ echo "applying init schema: $INIT_SQL"
 MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" --protocol=tcp "$MYSQL_DATABASE" < "$INIT_SQL"
 
+sql() {
+  MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -B \
+    -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" --protocol=tcp "$MYSQL_DATABASE" -e "$1"
+}
+sql 'CREATE TABLE IF NOT EXISTS schema_migrations (filename VARCHAR(255) PRIMARY KEY, checksum CHAR(64) NOT NULL, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)'
+
 for migration in "$MIGRATION_DIR"/*.sql; do
   [ -e "$migration" ] || continue
+  filename=$(basename "$migration")
+  case "$filename" in *[!a-zA-Z0-9_.-]*) echo "invalid migration filename" >&2; exit 1;; esac
+  checksum=$(sha256sum "$migration" | cut -d ' ' -f 1)
+  previous=$(sql "SELECT checksum FROM schema_migrations WHERE filename='$filename'")
+  if [ -n "$previous" ]; then
+    if [ "$previous" != "$checksum" ]; then
+      echo "migration checksum changed: $filename; refusing to continue" >&2
+      exit 1
+    fi
+    echo "already applied: $filename"
+    continue
+  fi
   echo "applying migration: $(basename "$migration")"
   MYSQL_PWD="$MYSQL_PASSWORD" mysql \
     -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" --protocol=tcp "$MYSQL_DATABASE" < "$migration"
+  sql "INSERT INTO schema_migrations (filename, checksum) VALUES ('$filename', '$checksum')"
 done
 
 echo "database migrations applied"

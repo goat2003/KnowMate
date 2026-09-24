@@ -5,6 +5,12 @@
 .ruff_cache
 .worktrees
 artifacts
+.local-server
+.env
+configs/env/prod.env
+configs/env/wechat.env
+deploy/kubernetes/secrets.yaml
+**/*.key
 **/__pycache__
 **/*.pyc
 **/.venv

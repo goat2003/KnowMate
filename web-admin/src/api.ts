@@ -1,4 +1,8 @@
 import type {
+  ChatMessage,
+  ChatMemory,
+  ChatResult,
+  WeChatStatus,
   Article,
   FeedbackResult,
   HealthResponse,
@@ -28,6 +32,7 @@ interface Envelope<T> {
   run?: T;
   result?: T;
   explanation?: T;
+  user?: T;
   status?: string;
   db?: Record<string, unknown>;
   agent?: Record<string, unknown>;
@@ -83,6 +88,20 @@ export function createApiClient(options: ClientOptions = {}) {
   }
 
   return {
+    wechatMe: () => request<{ id: string }>("/wechat/me", {}, "user"),
+    wechatConversations: () => request<ChatMessage[]>("/wechat/conversations", {}, "items"),
+    wechatSend: (body: { request_id: string; text: string; remember: boolean }) =>
+      request<{ id: number }>("/wechat/messages", { method: "POST", body: JSON.stringify(body) }, "result"),
+    wechatMemories: () => request<ChatMemory[]>("/wechat/memories", {}, "items"),
+    wechatForget: (key?: string) => request<void>(`/wechat/memories${toQuery({ key })}`, { method: "DELETE" }),
+    wechatRecommendations: () => request<ChatResult["recommendations"]>("/wechat/recommendations", {}, "items"),
+    chatMessages: (userID: string) => request<ChatMessage[]>(`/chat/messages${toQuery({ user_id: userID })}`, {}, "items"),
+    sendChat: (body: { user_id: string; request_id: string; text: string; remember: boolean }) =>
+      request<{ id: number }>("/chat/messages", { method: "POST", body: JSON.stringify(body) }, "result"),
+    chatMemories: (userID: string) => request<ChatMemory[]>(`/chat/memories${toQuery({ user_id: userID })}`, {}, "items"),
+    forgetChatMemory: (userID: string, key?: string) => request<void>(`/chat/memories${toQuery({ user_id: userID, key })}`, { method: "DELETE" }),
+    chatUsers: () => request<string[]>("/chat/users", {}, "items"),
+    wechatStatus: () => request<WeChatStatus>("/wechat/status", {}, "result"),
     health: () => request<HealthResponse>("/health"),
     runArticles: () => request<RunArticlesResult>("/runs/articles", { method: "POST" }, "result"),
     listRuns: (query: Record<string, QueryValue> = {}) => request<TaskRun[]>(`/runs${toQuery(query)}`, {}, "items"),

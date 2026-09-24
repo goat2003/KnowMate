@@ -227,3 +227,46 @@ CREATE TABLE IF NOT EXISTS mcp_call_logs (
   KEY idx_mcp_call_status (status),
   KEY idx_mcp_call_server_tool (server_name, tool_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS chat_users (
+  user_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+  memory_epoch BIGINT NOT NULL DEFAULT 0,
+  remember BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS chat_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  request_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  recipient VARCHAR(128) NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  remember BOOLEAN NOT NULL DEFAULT FALSE,
+  status VARCHAR(24) NOT NULL DEFAULT 'pending',
+  memory_epoch BIGINT NOT NULL DEFAULT 0,
+  result_json JSON NULL,
+  error_message VARCHAR(255) NOT NULL DEFAULT '',
+  delivery VARCHAR(24) NOT NULL DEFAULT 'none',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_chat_request (user_id, request_id),
+  KEY ix_chat_queue (status, id),
+  KEY ix_chat_user (user_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS chat_memories (
+  user_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  memory_key VARCHAR(32) NOT NULL,
+  value VARCHAR(1000) NOT NULL,
+  evidence VARCHAR(1000) NOT NULL,
+  source_job_id BIGINT UNSIGNED NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, memory_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS wechat_sessions (
+  user_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+  last_message_at BIGINT NOT NULL,
+  remaining INT NOT NULL DEFAULT 5
+) ENGINE=InnoDB;

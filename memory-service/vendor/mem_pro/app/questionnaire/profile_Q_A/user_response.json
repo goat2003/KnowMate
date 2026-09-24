@@ -1,0 +1,96 @@
+{
+  "role_id": "conv-91",
+  "questionnaire_id": "NSDF",
+  "questionnaire_version": "01",
+  "answers": [
+    {
+      "question_id": "basic_profile",
+      "field_values": {
+        "gender": "女",
+        "age: yyyy-mm-dd": "1999-11-27",
+        "city": "杭州",
+        "school_or_company": "浙江大学",
+        "occupation": "外贸"
+      },
+      "free_text": ""
+    },
+    {
+      "question_id": "social_goal",
+      "selected_option_ids": "学习 / 工作伙伴",
+      "free_text": ""
+    },
+    {
+      "question_id": "interest_tags",
+      "selected_option_ids": "徒步",
+      "free_text": ""
+    },
+    {
+      "question_id": "free_time_scene",
+      "ranked_option_ids": [
+        "找个咖啡馆慢慢聊天",
+        "约人运动出汗",
+        "看展、看电影或看演出",
+        "去自习或一起练技能",
+        "线上开黑或语音聊天",
+        "城市漫游、拍照、探店",
+        "宅着充电，看看内容或休息"
+      ],
+      "free_text": ""
+    },
+    {
+      "question_id": "conversation_topics",
+      "selected_option_ids": "最近看的电影、听的歌、读的书",
+      "free_text": ""
+    },
+    {
+      "question_id": "social_recharge_style",
+      "ranked_option_ids": [
+        "约朋友出来聊聊，会恢复得更快",
+        "只想见熟人或小范围朋友",
+        "更想自己待着恢复",
+        "看当天状态，不固定"
+      ],
+      "free_text": ""
+    },
+    {
+      "question_id": "new_activity_reaction",
+      "ranked_option_ids": [
+        "立刻想去，越新鲜越好",
+        "感兴趣会去，但想先了解一下",
+        "如果有熟人一起就可以",
+        "更愿意选择熟悉的活动"
+      ],
+      "free_text": ""
+    },
+    {
+      "question_id": "plan_style",
+      "ranked_option_ids": [
+        "时间、地点、流程都提前定好",
+        "有大致方向就行",
+        "见面后边走边决定",
+        "看和谁约，不同人不一样"
+      ],
+      "free_text": ""
+    },
+    {
+      "question_id": "skill_tags",
+      "selected_option_ids": "活动策划",
+      "free_text": ""
+    },
+    {
+      "question_id": "skill_social_mode",
+      "selected_option_ids": "更想线下一起练",
+      "free_text": ""
+    },
+    {
+      "question_id": "match_preference",
+      "selected_option_ids": "生活节奏相近的人",
+      "free_text": ""
+    },
+    {
+      "question_id": "profile_prompt",
+      "prompt_id": "recently_into",
+      "text_answer": "Hello World"
+    }
+  ]
+}
